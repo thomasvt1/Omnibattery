@@ -73,3 +73,25 @@ def test_consumption_repeated_hour_uses_local_bins_twice(monkeypatch):
     profile = [0]*96
     profile[8:12] = [1]*4
     assert consumption_by_slot([slot], {}, profile)[slot] == 8
+
+
+def test_price_release_keeps_second_fold_pending(monkeypatch):
+    from custom_components.omnibattery.control import charge_delay as module
+    monkeypatch.setattr(dt_util, 'DEFAULT_TIME_ZONE', ZoneInfo('Europe/Madrid'))
+    first=datetime(2026,10,25,0,tzinfo=timezone.utc)
+    slots=[PriceSlot(first, first+timedelta(hours=1), .4),
+           PriceSlot(first+timedelta(hours=1), first+timedelta(hours=2), .1)]
+    monkeypatch.setattr(module, '_decision_now', lambda:local_time(first))
+    mgr=object.__new__(module.ChargeDelayManager)
+    mgr._controller=SimpleNamespace(price_sensor='sensor.price',predictive_charging_enabled=True,
+        predictive_charging_mode='dynamic_pricing',
+        _pricing_mgr=SimpleNamespace(get_future_price_slots=lambda:slots))
+    assert mgr._window_avg_price(first,1,slots)==pytest.approx(.4)
+    assert mgr._window_avg_price(first+timedelta(hours=1),1,slots)==pytest.approx(.1)
+    assert mgr._window_avg_price(first,2,slots)==pytest.approx(.25)
+    for duration in (None,1):
+        assert mgr._price_optimal_release_h(2,4,duration)==2
+        assert mgr._price_release_pending(2,2)
+    monkeypatch.setattr(module, '_decision_now',lambda:local_time(first+timedelta(hours=1)))
+    assert mgr._price_optimal_release_h(2,4,1)==2
+    assert not mgr._price_release_pending(2,2)

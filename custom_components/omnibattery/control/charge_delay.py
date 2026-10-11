@@ -39,7 +39,7 @@ from ..solar_forecast import (
     get_configured_solar_forecast_sensor,
     read_remaining_solar_kwh,
 )
-from ..pricing.time_math import elapsed, local_time
+from ..pricing.time_math import elapsed, local_time, instant
 
 # Price-aware release only makes sense when charging is actually scheduled by
 # price. In time-slot mode prices drive nothing, so a configured price_sensor
@@ -874,7 +874,7 @@ class ChargeDelayManager:
                     else min(time_backup_unlock_h, cushion_edge_h)
                 )
                 release_h = self._price_hold_release_h(now_h, edge_h, charge_time_h)
-                if release_h is not None and now_h + 1e-6 < release_h:
+                if release_h is not None and self._price_release_pending(now_h, release_h):
                     _LOGGER.info(
                         "Charge Delay: Cushion-only shortfall (net=%.1f >= needed=%.1f, "
                         "factored=%.1f) - holding for cheaper hour %.2fh (edge %.2fh)",
@@ -910,7 +910,7 @@ class ChargeDelayManager:
         # more export than a slightly dearer start sitting in a sustained trough).
         release_h = self._price_hold_release_h(now_h, est_unlock_h, charge_time_h)
         if release_h is not None:
-            if now_h + 1e-6 < release_h:
+            if self._price_release_pending(now_h, release_h):
                 # A cheaper feasible hour lies ahead, keep holding for it.
                 return True
             # Current hour is the cheapest feasible export hour, release now.
@@ -944,13 +944,21 @@ class ChargeDelayManager:
         if edge_h <= now_h:
             return None
         release_h = self._price_optimal_release_h(now_h, edge_h, charge_h)
-        if release_h is None or now_h + 1e-6 >= release_h:
+        if release_h is None or not self._price_release_pending(now_h, release_h):
             return release_h
         ctrl = self._controller
         hhmm = ctrl._consumption_tracker.h_to_hhmm(release_h)
         ctrl._charge_delay_status["estimated_unlock_time"] = hhmm
         ctrl._charge_delay_status["state"] = f"Delayed (price, {hhmm} est.)"
         return release_h
+
+    def _price_release_pending(self, now_h: float, release_h: float) -> bool:
+        """Preserve the scored fold when the public display hour is ambiguous."""
+        result = getattr(self, "_price_release_instant", None)
+        evaluated = getattr(self, "_price_evaluated_instant", None)
+        if result is not None and evaluated is not None:
+            return result > evaluated
+        return now_h + 1e-6 < release_h
 
     def _price_optimal_release_h(
         self, now_h: float, edge_h: float, charge_h: float | None = None
@@ -974,6 +982,8 @@ class ChargeDelayManager:
         This only ever moves the release EARLIER than the feasibility edge; it never
         defers past it, so the SOC-target safety margin enforced upstream is intact.
         """
+        self._price_release_instant = None
+        self._price_evaluated_instant = None
         ctrl = self._controller
         # Only honour prices when predictive charging is actually price-driven.
         # In time-slot mode a configured price_sensor drives nothing, so it must
@@ -996,68 +1006,74 @@ class ChargeDelayManager:
         if not slots:
             return None
 
-        def _score(start_h):
-            """Window-average price for a charge starting at ``start_h`` (or the
-            single covering-slot price when no charge length is known)."""
+        day = local_time(slots[0].start)
+        clock = local_time(_decision_now())
+        # The legacy caller supplies a local display hour. Retain the current
+        # fold from its clock; tariff candidates themselves stay absolute.
+        current_local = day.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=now_h)
+        if clock.date() == day.date():
+            current_local = current_local.replace(fold=clock.fold)
+        current = instant(current_local)
+        edge = instant(day.replace(hour=0, minute=0, second=0, microsecond=0)
+                       + timedelta(hours=edge_h))
+
+        def score(start):
             if charge_h and charge_h > 0:
-                return self._window_avg_price(start_h, charge_h, slots)
-            for s in slots:
-                local_start = local_time(s.start)
-                s_h = local_start.hour + local_start.minute / 60.0
-                s_end = s_h + (elapsed(s.end, s.start)).total_seconds() / 3600.0
-                if s_h - 1e-9 <= start_h < s_end:
-                    return s.price
+                return self._window_avg_price(start, charge_h, slots)
+            for slot in slots:
+                if instant(slot.start) <= start < instant(slot.end):
+                    return slot.price
             return None
 
-        candidates = []  # (start_hour, score)
-        has_current = False
-        for s in slots:
-            local_start = local_time(s.start)
-            s_h = local_start.hour + local_start.minute / 60.0
-            if s_h > edge_h + 1e-6:  # slot starts after the feasibility edge
+        candidates = []
+        for slot in slots:
+            start = max(current, instant(slot.start))
+            if start > edge or start >= instant(slot.end):
                 continue
-            score = _score(s_h)
-            if score is None:  # window runs past available price data — unscorable
-                continue
-            candidates.append((s_h, score))
-            if s_h <= now_h + 1e-9:  # a slot covers the current moment
-                has_current = True
+            price = score(start)
+            if price is not None:
+                candidates.append((start, price))
         if not candidates:
             return None
-
-        eps = 0.005  # EUR/kWh: ignore sub-cent differences, prefer releasing sooner
-        best_h, best_p = min(candidates, key=lambda c: (c[1], c[0]))
-        if has_current:
-            cur_score = _score(now_h)  # window starting at the current moment
-            if cur_score is not None and cur_score <= best_p + eps:
-                return now_h
-        return best_h
+        best, best_price = min(candidates, key=lambda item: (item[1], item[0]))
+        current_price = score(current)
+        if current_price is not None and current_price <= best_price + 0.005:
+            best = current
+        self._price_release_instant = best
+        self._price_evaluated_instant = current
+        local_best = local_time(best)
+        return local_best.hour + local_best.minute / 60.0 + local_best.second / 3600.0
 
     @staticmethod
-    def _window_avg_price(start_h: float, charge_h: float, slots: list) -> float | None:
-        """Duration-weighted average slot price over [start_h, start_h+charge_h].
+    def _window_avg_price(start_h: float | datetime, charge_h: float, slots: list) -> float | None:
+        """Average price over an elapsed-time window, preserving repeated hours.
 
-        Returns ``None`` when the window is not fully covered by the available
-        slots (an incomplete forecast tail, or a window crossing midnight past the
-        today-only slot set), so the caller skips that start rather than scoring a
-        partial — and therefore artificially cheap — window.
+        Datetime starts identify an exact candidate. Float starts are retained
+        for legacy callers and interpreted on the first slot's local day/fold.
         """
-        if charge_h <= 0:
+        if charge_h <= 0 or not slots:
             return None
-        end_h = start_h + charge_h
+        if isinstance(start_h, datetime):
+            start = instant(start_h)
+        else:
+            local = local_time(slots[0].start)
+            wall = local.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=start_h)
+            start = instant(wall.replace(fold=local.fold))
+        end = start + timedelta(hours=charge_h)
+        cursor = start
         cost = 0.0
-        covered = 0.0
-        for s in slots:
-            local_start = local_time(s.start)
-            s_h = local_start.hour + local_start.minute / 60.0
-            s_end = s_h + (elapsed(s.end, s.start)).total_seconds() / 3600.0
-            overlap = min(end_h, s_end) - max(start_h, s_h)
-            if overlap > 0:
-                cost += s.price * overlap
-                covered += overlap
-        if covered < charge_h - 1e-6:
-            return None
-        return cost / charge_h
+        for slot in sorted(slots, key=lambda item: instant(item.start)):
+            left = max(cursor, instant(slot.start))
+            right = min(end, instant(slot.end))
+            if right <= left:
+                continue
+            if left > cursor:
+                return None  # An uncovered interval cannot be priced as free.
+            cost += slot.price * (right - left).total_seconds() / 3600.0
+            cursor = right
+            if cursor >= end:
+                return cost / charge_h
+        return None
 
     def _low_forecast_price_release(self, now_h: float) -> bool:
         """Hold a genuine grid-deficit day until its cheapest import hour.
@@ -1079,7 +1095,7 @@ class ChargeDelayManager:
         if edge_h <= now_h:
             return False  # solar already due/past — no cheap pre-solar window
         release_h = self._price_optimal_release_h(now_h, edge_h)
-        if release_h is None or now_h + 1e-6 >= release_h:
+        if release_h is None or not self._price_release_pending(now_h, release_h):
             return False  # no price data, or now is the cheapest feasible hour
         hhmm = ctrl._consumption_tracker.h_to_hhmm(release_h)
         ctrl._charge_delay_status["estimated_unlock_time"] = hhmm
