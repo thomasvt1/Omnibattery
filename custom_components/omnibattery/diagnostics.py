@@ -959,6 +959,11 @@ async def async_get_config_entry_diagnostics(
         "recorder_backfill": recorder_backfill,
         "vacation_learning": vacation,
         "solar_profile": solar_profile,
+        "solar_forecast": {
+            "freshness": getattr(controller, "solar_forecast_freshness", "unknown"),
+            "source": getattr(controller, "solar_forecast_source", None),
+            "conversion": getattr(controller, "solar_forecast_conversion", None),
+        },
         "curtailment": _curtailment_info(controller),
         "surplus_price_hold": _surplus_hold_info(controller),
         "discharge_reserve": _discharge_reserve_info(controller),

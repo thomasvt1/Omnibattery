@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -22,6 +22,8 @@ from .pricing.time_math import instant
 
 ForecastSource = Literal["remaining", "today"]
 _FORECAST_EPSILON_KWH = 1e-9
+FORECAST_MAX_AGE = timedelta(hours=6)
+FORECAST_CLOCK_SKEW = timedelta(minutes=5)
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,8 @@ class SolarForecast:
     sensor: str
     periods: tuple[SolarForecastPeriod, ...] = ()
     conversion: str = "none"
+    freshness: str = "unknown"
+    reported_at: datetime | None = None
 
     @property
     def remaining_kwh(self) -> float:
@@ -88,6 +92,8 @@ class SolarForecastInput:
     original_source: str | None = None
     conversion: str = "none"
     horizon: str = "remaining"
+    freshness: str = "unknown"
+    fallback_reason: str | None = None
 
     def __post_init__(self) -> None:
         """Keep the normalized contract finite even with a loose sensor value."""
@@ -281,11 +287,38 @@ def _extract_forecast_periods(state: Any) -> tuple[SolarForecastPeriod, ...]:
     return tuple(parsed)
 
 
+def forecast_freshness(state: Any, now: datetime, timezone: Any) -> tuple[str, datetime | None]:
+    """Use provider issuance and HA reports; unchanged values can still be fresh."""
+    attributes = getattr(state, "attributes", {}) or {}
+    report = getattr(state, "last_reported", None) or getattr(state, "last_updated", None)
+    report = _parse_period_timestamp(report)
+    issued = _parse_period_timestamp(attributes.get("forecast_generated_at", attributes.get("generated_at")))
+    valid_date = attributes.get("forecast_date")
+    if valid_date is not None:
+        try:
+            if date.fromisoformat(str(valid_date)[:10]) != now.astimezone(timezone).date():
+                return "wrong_date", report
+        except ValueError:
+            return "invalid_date", report
+    stamps = [stamp for stamp in (report, issued) if stamp is not None]
+    if not stamps:
+        # Lightweight integrations without timestamp metadata remain supported,
+        # but are explicitly unverified rather than reported as fresh.
+        return "unknown", None
+    ages = [(now.timestamp() - stamp.timestamp()) for stamp in stamps]
+    if any(age < -FORECAST_CLOCK_SKEW.total_seconds() for age in ages):
+        return "future_timestamp", report
+    if any(age > FORECAST_MAX_AGE.total_seconds() for age in ages):
+        return "stale", report
+    return "fresh", report
+
+
 def read_solar_forecast_kwh(
     hass: Any,
     controller: Any,
     *,
     update_controller: bool = True,
+    now: datetime | None = None,
 ) -> SolarForecast | None:
     """Read the preferred forecast: remaining first, legacy today second.
 
@@ -300,11 +333,22 @@ def read_solar_forecast_kwh(
         ),
         ("today", get_configured_solar_forecast_sensor(controller, "today")),
     )
+    current = now or datetime.now(timezone.utc)
+    zone = solar_forecast_local_timezone(hass, controller, current)
+    if current.tzinfo is None:
+        current = current.replace(tzinfo=zone)
+    if update_controller:
+        controller.solar_forecast_freshness = "unavailable"
     for source, sensor in candidates:
         if not sensor:
             continue
         state = hass.states.get(sensor)
         value = _state_kwh(state)
+        freshness, reported_at = forecast_freshness(state, current, zone)
+        if update_controller:
+            controller.solar_forecast_freshness = freshness
+        if freshness not in ("fresh", "unknown"):
+            continue
         if value is not None:
             forecast = SolarForecast(
                 value,
@@ -312,6 +356,8 @@ def read_solar_forecast_kwh(
                 sensor,
                 periods=_extract_forecast_periods(state),
                 conversion="none",
+                freshness=freshness,
+                reported_at=reported_at,
             )
             # Most control callers retain the source for diagnostics. Dashboard
             # projections use the same adapter read-only, so they can refresh
@@ -485,6 +531,7 @@ def read_remaining_solar_kwh(
         hass,
         controller,
         update_controller=update_controller,
+        now=now if isinstance(now, datetime) else None,
     )
     if forecast is None:
         if update_controller:
@@ -496,6 +543,8 @@ def read_remaining_solar_kwh(
             periods=None,
             original_source=None,
             conversion="unsafe_zero",
+            freshness=getattr(controller, "solar_forecast_freshness", "unavailable"),
+            fallback_reason=getattr(controller, "solar_forecast_freshness", "unavailable"),
         )
 
     # Some providers roll the scalar ``remaining today`` state a few minutes
@@ -529,6 +578,7 @@ def read_remaining_solar_kwh(
             periods=forecast.periods or None,
             original_source="remaining",
             conversion="none",
+            freshness=forecast.freshness,
         )
         if update_controller:
             controller.solar_forecast_conversion = "none"
