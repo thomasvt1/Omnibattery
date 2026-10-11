@@ -62,3 +62,9 @@ Charge completion estimates and allocation weights account for AC-to-DC losses. 
 Drivers may optionally supply `EfficiencyMeasurement` records under `efficiency_measurements["charge"|"discharge"]`: paired energy over the same isolated converter, at least 30 samples, 300 seconds and 0.05 kWh input, with a finite ratio from 0.5 to 1 and an aware observation timestamp no older than one day. PV-contaminated, stale or invalid measurements leave the driver's defaults in place. Current drivers do not claim measurements they cannot independently observe.
 
 The charging model is also used when calculating legacy fallback durations, charge-delay completion time, dashboard fallback quotas and quota carry-over. An already-started replacement slot is credited only for its remaining elapsed duration. Model reads inspect non-responsive exclusions without resetting retry state, using battery identity rather than display names.
+
+Solar reserve and absorption calculations keep forecast demand on the AC side
+and convert claims into required stored energy using the participating fleet’s
+discharge efficiency. Live SOC targets recompute that conversion; 3 kWh of AC
+demand requires 5 kWh stored at 60% discharge efficiency. Directional loss
+assumptions are separate from configured round-trip price-arbitrage costs.

@@ -44,7 +44,8 @@ class EfficiencyMeasurement:
         try:
             age = (now - self.observed_at).total_seconds()
             ratio = self.output_kwh / self.input_kwh
-            if (self.isolated_converter and self.samples >= 30 and self.duration_s >= 300
+            if (self.isolated_converter and isinstance(self.samples, int)
+                    and self.samples >= 30 and self.duration_s >= 300
                     and all(math.isfinite(v) for v in (self.input_kwh, self.output_kwh, self.duration_s, ratio))
                     and self.input_kwh >= 0.05 and 0.5 <= ratio <= 1 and 0 <= age <= 86400):
                 return ratio

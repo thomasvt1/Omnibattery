@@ -80,6 +80,7 @@ class ReservePlan:
     status: str = STATUS_NO_RESERVE
     reason: str = REASON_NO_SLOTS
     min_saving: float = 0.0
+    discharge_efficiency: float = 1.0
     usable_energy_kwh: float = 0.0
     total_capacity_kwh: float = 0.0
     free_space_kwh: float = 0.0
@@ -102,6 +103,10 @@ class ReservePlan:
     claim_breakdown: list[tuple[ReserveSlot, float, float]] = field(
         default_factory=list
     )
+
+    def _stored_demand(self, slot: ReserveSlot) -> float:
+        """Slot demand stays AC-side; claims and SOC accounting are stored-side."""
+        return _positive(slot.net_demand_kwh) / self.discharge_efficiency
 
     def _reset_audit(self) -> None:
         self.threshold_price = None
@@ -130,6 +135,8 @@ class ReservePlan:
         returns, so the attributes never show a figure from an earlier cycle.
         """
         self._reset_audit()
+        if not _finite(self.discharge_efficiency) or not 0 < self.discharge_efficiency <= 1:
+            return 0.0, [], "invalid_discharge_efficiency"
         available = (
             self.usable_energy_kwh
             if usable_energy_kwh is None
@@ -143,7 +150,7 @@ class ReservePlan:
         threshold = float(current_price) + max(0.0, self.min_saving)
         self.threshold_price = threshold
         self.horizon_demand_kwh = sum(
-            _positive(slot.net_demand_kwh) for slot in self.slots if instant(slot.start) >= instant(now)
+            self._stored_demand(slot) for slot in self.slots if instant(slot.start) >= instant(now)
         )
         self.horizon_surplus_kwh = sum(
             _positive(slot.expected_surplus_kwh)
@@ -168,7 +175,7 @@ class ReservePlan:
         for slot in candidates:
             if claimed >= available - EPSILON:
                 break
-            take = min(slot.net_demand_kwh, available - claimed)
+            take = min(self._stored_demand(slot), available - claimed)
             if take <= EPSILON:
                 continue
             claimed += take
@@ -237,7 +244,7 @@ class ReservePlan:
                 pending += 1
             # The battery serves this slot's demand, which is room the sun can
             # land in; what it cannot hold is exported and never pays a claim.
-            room = min(ceiling, room + _positive(slot.net_demand_kwh))
+            room = min(ceiling, room + self._stored_demand(slot))
             absorbed = min(_positive(slot.expected_surplus_kwh), room)
             room -= absorbed
             stored += absorbed
@@ -349,9 +356,11 @@ def plan_discharge_reserve(
     horizon_end: datetime | None = None,
     surplus_by_slot: dict | None = None,
     free_space_kwh: float = 0.0,
+    discharge_efficiency: float = 1.0,
 ) -> ReservePlan:
     """Build the reserve plan for the remaining horizon."""
     plan = ReservePlan(
+        discharge_efficiency=discharge_efficiency,
         min_saving=max(0.0, _positive(min_saving)),
         usable_energy_kwh=_positive(usable_energy_kwh),
         total_capacity_kwh=_positive(total_capacity_kwh),

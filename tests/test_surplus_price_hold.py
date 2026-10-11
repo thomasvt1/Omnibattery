@@ -598,3 +598,18 @@ def test_the_daylight_share_is_zero_after_the_deadline():
     manager = _manager()
 
     assert manager._daylight_share(10.0, NOW, NOW - timedelta(hours=1)) == 0.0
+
+
+def test_live_absorption_target_recomputes_directional_losses():
+    from dataclasses import replace
+    snapshot = replace(_snapshot(), discharge_efficiency=.6)
+    controller = _controller(_pricing_mgr=_pricing(_curtailment_battery_snapshots=lambda:[snapshot]))
+    manager = _manager(controller)
+    _prime(manager)
+    manager._planned_remaining_consumption_kwh = 3
+    manager._refresh_live_target()
+    # Five stored kWh required, four available above the floor.
+    assert manager._live_target_kwh == pytest.approx(1)
+    snapshot = replace(snapshot, discharge_efficiency=1)
+    manager._refresh_live_target()
+    assert manager._live_target_kwh == 0

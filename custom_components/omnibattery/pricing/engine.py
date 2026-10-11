@@ -1556,6 +1556,7 @@ class PricingManager:
 
     def _curtailment_battery_snapshots(self) -> list[BatterySnapshot]:
         """Read live battery limits without bypassing any user ownership."""
+        from ..energy_model import battery_energy_model
         snapshots: list[BatterySnapshot] = []
         reserve = max(0.0, float(getattr(self._controller, "predischarge_reserve_soc", 0.0) or 0.0))
         guaranteed = (
@@ -1609,6 +1610,7 @@ class PricingManager:
                     max_discharge_power_w=max_discharge,
                     eligible=eligible,
                     can_discharge=can_discharge,
+                    discharge_efficiency=battery_energy_model(coordinator).discharge_efficiency,
                 )
             )
         return snapshots

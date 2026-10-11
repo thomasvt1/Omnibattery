@@ -135,6 +135,7 @@ def calculate_absorption_target_kwh(
     usable_energy_kwh: float | None,
     free_space_kwh: float | None,
     safety_margin_kwh: float = 0.0,
+    *, discharge_efficiency: float = 1.0,
 ) -> float | None:
     """Return the battery-side energy still worth absorbing today.
 
@@ -151,11 +152,12 @@ def calculate_absorption_target_kwh(
         _finite(remaining_consumption_kwh)
         and _finite(usable_energy_kwh)
         and _finite(free_space_kwh)
+        and _finite(discharge_efficiency) and 0 < float(discharge_efficiency) <= 1
     ):
         return None
     margin = float(safety_margin_kwh) if _finite(safety_margin_kwh) else 0.0
     space = max(0.0, float(free_space_kwh))
-    needed = float(remaining_consumption_kwh) + max(0.0, margin) - float(usable_energy_kwh)
+    needed = float(remaining_consumption_kwh) / float(discharge_efficiency) + max(0.0, margin) - float(usable_energy_kwh)
     return max(0.0, min(needed, space))
 
 
@@ -241,6 +243,7 @@ def plan_surplus_absorption(
     safety_margin_kwh: float = 0.0,
     max_charge_power_w: float | None = None,
     charge_efficiency: float = CHARGE_EFFICIENCY,
+    discharge_efficiency: float = 1.0,
     deadline: datetime | None = None,
     min_saving: float = 0.0,
     now: datetime | None = None,
@@ -321,6 +324,7 @@ def plan_surplus_absorption(
         usable_energy_kwh,
         free_space_kwh,
         safety_margin_kwh,
+        discharge_efficiency=discharge_efficiency,
     )
     if target_kwh is None:
         plan.status, plan.reason = STATUS_FAIL_SAFE, "missing_energy_forecast"

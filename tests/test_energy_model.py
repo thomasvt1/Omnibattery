@@ -36,7 +36,7 @@ def test_mixed_models_keep_direction_and_finish_times_separate():
 
 
 @pytest.mark.parametrize('change', [dict(input_kwh=0),dict(output_kwh=float('nan')),
-    dict(samples=2),dict(duration_s=10),dict(isolated_converter=False),
+    dict(samples=2),dict(samples=float('inf')),dict(samples=30.5),dict(duration_s=10),dict(isolated_converter=False),
     dict(observed_at=datetime(2020,1,1,tzinfo=timezone.utc)),dict(observed_at=datetime(2026,10,11))])
 def test_invalid_measurement_falls_back(change):
     now=datetime(2026,10,11,tzinfo=timezone.utc)

@@ -53,7 +53,9 @@ def _coordinator(
     manual: bool = False,
     name: str = "battery-1",
 ):
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
     return _HashableNamespace(
+        capabilities=SimpleNamespace(energy_model=BatteryEnergyModel(discharge_efficiency=1.0)),
         name=name,
         data={"battery_soc": soc, "battery_total_energy": capacity},
         is_available=available,
@@ -876,3 +878,27 @@ def test_solar_credit_uses_battery_model_efficiency():
     pricing = _pricing(_curtailment_forecast_model=lambda now: (4, None, None))
     _, surplus = manager._demand_and_surplus_by_slot(pricing, [midday], NOW, NOW + timedelta(hours=12))
     assert surplus[midday] == pytest.approx(SURPLUS_CREDIT_FACTOR * .6 * 4)
+
+
+def test_directional_losses_apply_to_rebuilt_and_live_reserve():
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
+    coordinator = _coordinator()
+    coordinator.capabilities = SimpleNamespace(energy_model=BatteryEnergyModel(.9, .6))
+    manager = _built(_controller(coordinators=[coordinator], _pricing_mgr=_pricing(
+        _profile_remaining_consumption=lambda *a: _forecast(3))))
+    assert manager._plan.reserve_kwh == pytest.approx(5)
+    assert manager.reserve_soc_pct() == pytest.approx(50)
+    coordinator.capabilities = SimpleNamespace(energy_model=BatteryEnergyModel(.9, 1))
+    assert manager.reserve_soc_pct() == pytest.approx(30)
+
+
+@pytest.mark.parametrize('change', [dict(allow_discharge=False), dict(max_discharge_power=0),
+                                   dict(data={'battery_soc':float('nan'),'battery_total_energy':10})])
+def test_nonparticipants_do_not_dilute_the_reserve_efficiency(change):
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
+    healthy = _coordinator()
+    other = _coordinator(name='excluded')
+    other.capabilities = SimpleNamespace(energy_model=BatteryEnergyModel(.6,.6))
+    for key,value in change.items(): setattr(other,key,value)
+    manager = _built(_controller(coordinators=[healthy,other]))
+    assert manager.reserve_soc_pct() == pytest.approx(40)
