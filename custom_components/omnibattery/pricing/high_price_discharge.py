@@ -192,7 +192,7 @@ def valid_discharge_battery(snapshot: BatterySnapshot) -> bool:
         and _finite(snapshot.floor_soc_pct)
         and _finite(snapshot.max_discharge_power_w)
         and snapshot.capacity_kwh > 0
-        and snapshot.max_discharge_power_w >= 0
+        and snapshot.max_discharge_power_w > 0
     )
 
 
