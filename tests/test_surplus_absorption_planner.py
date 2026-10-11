@@ -333,3 +333,15 @@ def test_release_between_slots_rather_than_acting_on_stale_data():
     hold, reason = hold_decision(plan, NOW)
 
     assert (hold, reason) == (False, "no_current_slot")
+
+
+@pytest.mark.parametrize('target, expected_status', [(1.3, STATUS_PLANNED), (3, STATUS_INFEASIBLE)])
+def test_modeled_losses_survive_selection_and_infeasible_copies(target, expected_status):
+    slots = [_slot(10, .1), _slot(11, .2)]
+    plan = plan_surplus_absorption(slots, {s:2 for s in slots}, [_battery()],
+        remaining_consumption_kwh=target, usable_energy_kwh=0, max_charge_power_w=2500,
+        charge_efficiency=.6, deadline=DEADLINE, now=NOW)
+    assert plan.status == expected_status
+    assert len(plan.selected_slots) == 2
+    assert plan.absorbable_total_kwh == pytest.approx(2.4)
+    assert sum(s.absorbable_kwh for s in plan.selected_slots) == pytest.approx(2.4)

@@ -30,7 +30,8 @@ from datetime import datetime
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
-from ..const import CHARGE_EFFICIENCY, PREDICTIVE_MODE_DYNAMIC_PRICING
+from ..const import PREDICTIVE_MODE_DYNAMIC_PRICING
+from ..energy_model import future_charge_efficiency
 from ..pricing.curtailment import BatterySnapshot, distribute_solar_forecast
 from ..pricing.discharge_reserve import (
     ReservePlan,
@@ -424,6 +425,7 @@ class DischargeReserveManager:
             0.0, float(getattr(self._controller, "max_charge_capacity", 0.0) or 0.0)
         )
         hold_state = self._hold_plan_state(now)
+        efficiency = future_charge_efficiency(self._controller)
         surplus: dict = {}
         for slot in consumption:
             raw_kwh = max(
@@ -440,7 +442,7 @@ class DischargeReserveManager:
                     # exported than stored. Crediting it would release the
                     # reserve against kWh that are never going to arrive.
                     absorbed_kwh = 0.0
-            surplus[slot] = SURPLUS_CREDIT_FACTOR * absorbed_kwh * CHARGE_EFFICIENCY
+            surplus[slot] = SURPLUS_CREDIT_FACTOR * absorbed_kwh * efficiency
         return net_demand_by_slot(consumption, solar), surplus
 
     def _hold_plan_state(self, now: datetime) -> tuple[set, set] | None:

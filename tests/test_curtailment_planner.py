@@ -435,3 +435,11 @@ def test_missing_inputs_fail_safe(kwargs, reason):
     assert plan.status == "fail_safe"
     assert plan.reason == reason
     assert plan.selected_discharge_slots == []
+
+
+def test_modeled_charge_efficiency_sets_solar_headroom():
+    slots = [_slot(8, .3), _slot(10, -.01)]
+    plan = plan_curtailment(slots, 2, 0, [_battery(soc=95)],
+        charge_power_w=2000, charge_efficiency=.6, max_export_power_w=2000,
+        solar_by_slot={slots[0]:0, slots[1]:2}, consumption_by_slot={s:0 for s in slots}, now=DAY)
+    assert plan.required_headroom_kwh == pytest.approx(1.2)

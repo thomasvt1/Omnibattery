@@ -864,3 +864,15 @@ def test_no_charge_capacity_credits_no_surplus():
 
     assert surplus[midday] == pytest.approx(0.0)
     assert surplus[evening] == pytest.approx(0.0)
+
+
+def test_solar_credit_uses_battery_model_efficiency():
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
+    from custom_components.omnibattery.control.discharge_reserve import SURPLUS_CREDIT_FACTOR
+    midday = _slot(12, .15)
+    manager = _manager()
+    manager._controller.coordinators = [SimpleNamespace(
+        capabilities=SimpleNamespace(energy_model=BatteryEnergyModel(.6, .9)))]
+    pricing = _pricing(_curtailment_forecast_model=lambda now: (4, None, None))
+    _, surplus = manager._demand_and_surplus_by_slot(pricing, [midday], NOW, NOW + timedelta(hours=12))
+    assert surplus[midday] == pytest.approx(SURPLUS_CREDIT_FACTOR * .6 * 4)

@@ -423,6 +423,7 @@ def plan_curtailment(
     predischarge_reserve_soc: float = 0.0,
     headroom_margin_kwh: float = 0.0,
     charge_power_w: float | None = None,
+    charge_efficiency: float = CHARGE_EFFICIENCY,
     max_export_power_w: float | None = 0.0,
     export_mode: str | None = None,
     solar_fraction_fn: Callable[[float], float] | None = None,
@@ -437,6 +438,11 @@ def plan_curtailment(
     """Build an anti-curtailment plan from normalized prices and live capacity."""
     evaluated_at = now or datetime.now()
     plan = CurtailmentPlan(evaluation_time=evaluated_at)
+
+    if not _finite(charge_efficiency) or not 0 < float(charge_efficiency) <= 1:
+        plan.status, plan.reason = "fail_safe", "invalid_charge_efficiency"
+        return plan
+    charge_efficiency = float(charge_efficiency)
 
     normalized_export_mode = normalize_export_mode(export_mode, max_export_power_w)
     try:
@@ -514,7 +520,7 @@ def plan_curtailment(
             slot_reserve = min(
                 surplus,
                 float(charge_power_w) * _duration_hours(slot) / 1000.0,
-            ) * CHARGE_EFFICIENCY
+            ) * charge_efficiency
             reserve_by_slot[slot] = slot_reserve
             required_kwh += slot_reserve
 

@@ -76,6 +76,7 @@ class AbsorptionSlot:
     export_price: float
     expected_surplus_kwh: float = 0.0
     selected: bool = False
+    charge_efficiency: float = CHARGE_EFFICIENCY
 
     @property
     def duration_hours(self) -> float:
@@ -84,7 +85,7 @@ class AbsorptionSlot:
     @property
     def absorbable_kwh(self) -> float:
         """Battery-side energy this slot can absorb, after charge losses."""
-        return max(0.0, self.expected_surplus_kwh) * CHARGE_EFFICIENCY
+        return max(0.0, self.expected_surplus_kwh) * self.charge_efficiency
 
     def contains(self, moment: datetime) -> bool:
         return instant(self.start) <= instant(moment) < instant(self.end)
@@ -239,6 +240,7 @@ def plan_surplus_absorption(
     usable_energy_kwh: float | None = None,
     safety_margin_kwh: float = 0.0,
     max_charge_power_w: float | None = None,
+    charge_efficiency: float = CHARGE_EFFICIENCY,
     deadline: datetime | None = None,
     min_saving: float = 0.0,
     now: datetime | None = None,
@@ -253,6 +255,11 @@ def plan_surplus_absorption(
     evaluated_at = now or datetime.now()
     plan = AbsorptionPlan(evaluation_time=evaluated_at, deadline=deadline)
     plan.min_saving = max(0.0, float(min_saving)) if _finite(min_saving) else 0.0
+
+    if not _finite(charge_efficiency) or not 0 < float(charge_efficiency) <= 1:
+        plan.status, plan.reason = STATUS_FAIL_SAFE, "invalid_charge_efficiency"
+        return plan
+    charge_efficiency = float(charge_efficiency)
 
     if not price_slots:
         plan.status, plan.reason = STATUS_FAIL_SAFE, "missing_prices"
@@ -301,6 +308,7 @@ def plan_surplus_absorption(
                 end=slot.end,
                 export_price=float(slot.price),
                 expected_surplus_kwh=capped,
+                charge_efficiency=charge_efficiency,
             )
         )
     plan.slots = absorption_slots
@@ -333,6 +341,7 @@ def plan_surplus_absorption(
                 end=slot.end,
                 export_price=slot.export_price,
                 expected_surplus_kwh=slot.expected_surplus_kwh,
+                charge_efficiency=slot.charge_efficiency,
                 selected=slot.absorbable_kwh > EPSILON,
             )
             for slot in absorption_slots
@@ -353,6 +362,7 @@ def plan_surplus_absorption(
             end=slot.end,
             export_price=slot.export_price,
             expected_surplus_kwh=slot.expected_surplus_kwh,
+            charge_efficiency=slot.charge_efficiency,
             selected=(slot.start, slot.end) in chosen,
         )
         for slot in absorption_slots
