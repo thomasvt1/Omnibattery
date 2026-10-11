@@ -625,3 +625,24 @@ async def test_energy_platform_exception_keeps_fill_empty(monkeypatch):
     monkeypatch.setattr(runtime, "async_get_integration", integration)
     await manager._fetch_solar_forecast()
     assert manager._solar_wh_hours == {}
+
+
+def test_efficiency_bound_ignores_nonparticipants(monkeypatch):
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
+    from custom_components.omnibattery.control import high_price_discharge as module
+    pricing=_pricing()
+    pricing._curtailment_battery_snapshots=lambda:[
+        BatterySnapshot('healthy',80,10,100,10,2500,True,True),
+        BatterySnapshot('offline',80,10,100,10,2500,False,False)]
+    coords=[SimpleNamespace(capabilities=SimpleNamespace(energy_model=BatteryEnergyModel(.8,.95))),
+            SimpleNamespace(capabilities=SimpleNamespace(energy_model=BatteryEnergyModel(.6,.6)))]
+    captured={}
+    original=module.plan_high_price_discharge
+    def plan(*args,**kwargs):
+        captured.update(kwargs)
+        return original(*args,**kwargs)
+    monkeypatch.setattr(module,'plan_high_price_discharge',plan)
+    manager, *_ = _manager(pricing=pricing,coordinators=coords)
+    manager.refresh_override()
+    assert captured['discharge_efficiency']==.95
+    assert captured['charge_efficiency']==.8

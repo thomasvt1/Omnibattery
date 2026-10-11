@@ -681,3 +681,15 @@ def test_allocation_at_and_remaining_kwh():
     assert plan.allocation_at(slots[1].start) is None
     assert plan.remaining_kwh(slots[0].start) == pytest.approx(allocation.energy_kwh)
     assert plan.remaining_kwh(slots[0].end) == 0.0
+
+
+def test_refill_requires_both_directional_losses():
+    slots=[_slot(0,export_price=1,import_price=.1)]
+    fill=[_slot(1,solar_kwh=10,export_price=.1)]
+    kwargs=dict(now=DAY,horizon_end=DAY+timedelta(hours=1),enabled=False,
+                trigger_1_enabled=True,chronological_coverage=False,fill_slots=fill,
+                discharge_efficiency=.95,round_trip_efficiency=.57)
+    optimistic=plan_high_price_discharge(slots,[_battery(soc=100)],charge_efficiency=1,**kwargs)
+    conservative=plan_high_price_discharge(slots,[_battery(soc=100)],charge_efficiency=.6,**kwargs)
+    assert optimistic.total_allocated_kwh>0
+    assert conservative.total_allocated_kwh==0

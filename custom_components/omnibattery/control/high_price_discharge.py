@@ -343,9 +343,13 @@ class HighPriceDischargeManager:
                 horizon_end = pricing.energy_horizon_end(now)
             slots = self._build_horizon(pricing, now, horizon_end)
             max_power_w, margin, trigger_2, trigger_1, safety_margin, chronological_coverage = config
+            snapshots = pricing._curtailment_battery_snapshots()
+            participating = [c for c, snapshot in zip(
+                getattr(self._controller, "coordinators", ()), snapshots
+            ) if snapshot.eligible and snapshot.can_discharge]
             plan = plan_high_price_discharge(
                 slots,
-                pricing._curtailment_battery_snapshots(),
+                snapshots,
                 now=self._aware(now),
                 horizon_end=self._aware(horizon_end),
                 enabled=trigger_2,
@@ -358,9 +362,12 @@ class HighPriceDischargeManager:
                 # Stored DC energy becomes delivered AC through one direction.
                 # The arbitrage round-trip setting remains a separate cost input.
                 round_trip_efficiency=float(getattr(self._controller, "round_trip_efficiency", 1.0)),
+                charge_efficiency=min(
+                    (battery_energy_model(c).charge_efficiency for c in participating), default=1.0,
+                ),
                 discharge_efficiency=min(
                     (battery_energy_model(c).discharge_efficiency
-                     for c in getattr(self._controller, "coordinators", ())), default=1.0,
+                     for c in participating), default=1.0,
                 ),
             )
         except Exception as err:  # noqa: BLE001
