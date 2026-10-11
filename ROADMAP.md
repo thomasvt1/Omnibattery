@@ -29,7 +29,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 
 ### 4. Report dashboard command progress and failures
 
-- Status: planned
+- Status: completed (implementation PR linked from the issue)
 - Issue: [4](https://github.com/thomasvt1/Omnibattery/issues/4)
 - Scope: Route dashboard service writes through a shared pending/success/failure helper, suppress duplicates, restore actual values after errors, and distinguish service acceptance from physical delivery.
 - Acceptance: Rejected writes display actionable feedback and clear optimistic slider state; pending commands cannot be duplicated; successful writes never claim physical delivery.

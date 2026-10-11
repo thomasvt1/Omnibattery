@@ -50,6 +50,9 @@ const DAILY_OPERATION_SUNSET_ZERO_INTERVALS = 4;
 // names in translations/*.json so the panel reads consistently with HA.
 const I18N = {
   en: {
+    commandPending: "Sending setting…",
+    commandAccepted: "Setting accepted. Check live power to confirm battery response.",
+    commandFailed: "Setting failed: {error}",
     subtitle: "Control Panel",
     live: "Live",
     evCharger: "EV charger",
@@ -1785,6 +1788,7 @@ class MarstekVenusPanel extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._hass = null;
+    this._pendingCommands = new Set();
     this._panelConfig = {};
     this._built = false;
     this._view = "resumen";
@@ -1803,6 +1807,53 @@ class MarstekVenusPanel extends HTMLElement {
     this._dailyOperationGlobalListenersAttached = false;
     this._dailyOperationVisualViewport = null;
     this._onDailyOperationViewportChange = this._dismissDailyOperationFloatingTooltip.bind(this);
+  }
+
+  _commandFeedback(kind, message) {
+    let status = this.shadowRoot.querySelector(".command-feedback");
+    if (!status) {
+      status = document.createElement("div");
+      status.className = "command-feedback";
+      status.setAttribute("role", "status");
+      status.setAttribute("aria-live", "polite");
+      this.shadowRoot.appendChild(status);
+    }
+    status.dataset.kind = kind;
+    status.textContent = message;
+  }
+
+  async _sendCommand(domain, service, data, control) {
+    const id = data.entity_id;
+    if (this._pendingCommands.has(id)) return false;
+    this._pendingCommands.add(id);
+    if (control) {
+      control.disabled = true;
+      control.setAttribute("aria-busy", "true");
+    }
+    this._commandFeedback("pending", this._t("commandPending"));
+    try {
+      await this._hass.callService(domain, service, data);
+      this._commandFeedback("accepted", this._t("commandAccepted"));
+      return true;
+    } catch (error) {
+      if (control) {
+        control.__pendingValue = undefined;
+        control.__pendingUntil = 0;
+        control.__sliding = false;
+        const actual = this._hass.states[id]?.state;
+        if (actual != null && !["unknown", "unavailable"].includes(actual)) control.value = actual;
+        control.dispatchEvent(new Event("change-failed"));
+      }
+      this._commandFeedback("failed", this._t("commandFailed", { error: error?.message || String(error) }));
+      this._update();
+      return false;
+    } finally {
+      this._pendingCommands.delete(id);
+      if (control) {
+        control.disabled = ["unknown", "unavailable"].includes(this._hass.states[id]?.state) || !this._hass.states[id];
+        control.removeAttribute("aria-busy");
+      }
+    }
   }
 
   // --- HA-injected properties ------------------------------------------------
@@ -6217,7 +6268,7 @@ class MarstekVenusPanel extends HTMLElement {
       btn.innerHTML = `<ha-icon icon="${c.icon}"></ha-icon>${cLabel}`;
       btn.addEventListener("click", () => {
         if (c.confirm && !window.confirm(`${cLabel}?`)) return;
-        this._hass.callService("button", "press", { entity_id: id });
+        this._sendCommand("button", "press", { entity_id: id }, btn);
       });
       frag.appendChild(btn);
       r.controls[c.key] = { type: "button" };
@@ -6234,7 +6285,7 @@ class MarstekVenusPanel extends HTMLElement {
       btn.className = "ctl-toggle";
       btn.innerHTML = `<span class="ctl-knob"></span>`;
       btn.addEventListener("click", () =>
-        this._hass.callService("switch", "toggle", { entity_id: id })
+        this._sendCommand("switch", "toggle", { entity_id: id }, btn)
       );
       frag.appendChild(btn);
       r.controls[c.key] = { type: "switch", el: btn };
@@ -6242,7 +6293,7 @@ class MarstekVenusPanel extends HTMLElement {
       const sel = document.createElement("select");
       sel.className = "ctl-select";
       sel.addEventListener("change", () =>
-        this._hass.callService("select", "select_option", { entity_id: id, option: sel.value })
+        this._sendCommand("select", "select_option", { entity_id: id, option: sel.value }, sel)
       );
       frag.appendChild(sel);
       r.controls[c.key] = { type: "select", el: sel };
@@ -6264,10 +6315,10 @@ class MarstekVenusPanel extends HTMLElement {
       range.addEventListener("change", () => {
         const value = this._clampToEntity(id, range.value);
         this._markRangePending(range, value);
-        this._hass.callService("number", "set_value", {
+        this._sendCommand("number", "set_value", {
           entity_id: id,
           value,
-        });
+        }, range);
       });
       wrap.appendChild(range);
       wrap.appendChild(valEl);
@@ -6972,7 +7023,7 @@ class MarstekVenusPanel extends HTMLElement {
       btn.innerHTML = `<ha-icon icon="${item.icon}"></ha-icon>${label}`;
       btn.addEventListener("click", () => {
         if (item.confirm && !window.confirm(`${label}?`)) return;
-        hass.callService("button", "press", { entity_id: id });
+        this._sendCommand("button", "press", { entity_id: id }, btn);
       });
       frag.appendChild(btn);
       store[sk] = { type: "button" };
@@ -7009,7 +7060,7 @@ class MarstekVenusPanel extends HTMLElement {
       const btn = document.createElement("button");
       btn.className = "ctl-toggle";
       btn.innerHTML = `<span class="ctl-knob"></span>`;
-      btn.addEventListener("click", () => hass.callService("switch", "toggle", { entity_id: id }));
+      btn.addEventListener("click", () => this._sendCommand("switch", "toggle", { entity_id: id }, btn));
       frag.appendChild(btn);
       store[sk] = { type: "switch", el: btn };
       if (item.gateInvert) { store[sk].realId = id; store[sk].invert = true; }
@@ -7017,7 +7068,7 @@ class MarstekVenusPanel extends HTMLElement {
       const sel = document.createElement("select");
       sel.className = "ctl-select";
       sel.addEventListener("change", () =>
-        hass.callService("select", "select_option", { entity_id: id, option: sel.value })
+        this._sendCommand("select", "select_option", { entity_id: id, option: sel.value }, sel)
       );
       frag.appendChild(sel);
       store[sk] = { type: "select", el: sel };
@@ -7047,7 +7098,7 @@ class MarstekVenusPanel extends HTMLElement {
       range.addEventListener("change", () => {
         const value = this._clampToEntity(id, range.value);
         this._markRangePending(range, value);
-        hass.callService("number", "set_value", { entity_id: id, value });
+        this._sendCommand("number", "set_value", { entity_id: id, value }, range);
       });
       wrap.appendChild(range);
       wrap.appendChild(valEl);
@@ -7453,6 +7504,8 @@ class MarstekVenusPanel extends HTMLElement {
       .stat-value { font-family: var(--font-display); font-weight: 600; letter-spacing: -0.02em; line-height: 1; font-size: 26px; }
       .stat-unit { color: var(--ink-dim); font-weight: 500; font-size: 0.5em; }
 
+      .command-feedback { position: fixed; bottom: 16px; left: 16px; right: 16px; z-index: 100; padding: 12px; border: 1px solid var(--accent); border-radius: 8px; background: var(--bg-2); color: var(--ink); }
+      .command-feedback[data-kind="failed"] { border-color: var(--error-color, #e55); }
       /* flow — 3D-render scene with leader-line callouts */
       /* width-based square: fills the column width and stays square (never
          letterboxed). It anchors the block height; the 2×2 column matches it. */
