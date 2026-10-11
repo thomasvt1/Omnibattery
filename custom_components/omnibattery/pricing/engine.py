@@ -2845,6 +2845,12 @@ class PricingManager:
                 c for c in self._controller.coordinators
                 if c.data and not self._controller._is_battery_manual_owned(c)
             ]
+            from ..energy_model import future_discharge_efficiency
+            from .chronological import stored_energy_intervals
+            charge_efficiency = self._charge_efficiency_bound(eligible)
+            discharge_efficiency = future_discharge_efficiency(self._controller, eligible)
+            ac_intervals = tuple(intervals)
+            intervals = list(stored_energy_intervals(ac_intervals, charge_efficiency, discharge_efficiency))
             total_capacity = sum(
                 float(c.data.get("battery_total_energy", 0) or 0)
                 for c in eligible
@@ -3001,11 +3007,12 @@ class PricingManager:
                 ChronologicalEvaluationRequest(
                     now=now,
                     horizon_end=horizon_end,
-                    intervals=tuple(intervals),
+                    intervals=ac_intervals,
                     price_slots=tuple(slots),
                     total_required_kwh=required,
                     effective_power_kw=power_kw,
-                    charge_efficiency=self._charge_efficiency_bound(eligible),
+                    charge_efficiency=charge_efficiency,
+                    discharge_efficiency=discharge_efficiency,
                     headroom_kwh=headroom,
                     usable_initial_kwh=usable,
                     max_price_threshold=price_ceiling,
@@ -4910,6 +4917,8 @@ class PricingManager:
         self._refresh_excluded_demand_reference()
         self._refresh_solar_forecast_reference(now)
 
+        from ..energy_model import future_discharge_efficiency
+
         # Battery energy available above the discharge floor right now.
         usable_now_kwh = sum(
             max(0.0, ((c.data.get("battery_soc", 0) or 0) - c.min_soc) / 100.0
@@ -4929,7 +4938,8 @@ class PricingManager:
                 weekly_gap_kwh,
                 max(
                     0.0,
-                    remaining_consumption_kwh - usable_now_kwh - remaining_solar_kwh,
+                    (remaining_consumption_kwh - remaining_solar_kwh)
+                    / future_discharge_efficiency(self._controller, coordinators_with_data) - usable_now_kwh,
                 ),
             ),
         )

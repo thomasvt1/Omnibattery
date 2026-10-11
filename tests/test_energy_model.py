@@ -142,3 +142,32 @@ def test_dashboard_projection_uses_each_battery_directional_efficiency():
     )
     snapshots = ChargeDischargeController._daily_operation_battery_inputs(controller)
     assert [(s.charge_efficiency, s.discharge_efficiency) for s in snapshots] == [(.6, .95), (.9, .7)]
+
+
+def test_chronological_deadlines_require_stored_energy_for_ac_demand():
+    from custom_components.omnibattery.pricing.chronological import EnergyInterval
+    now = datetime(2026, 10, 11, tzinfo=timezone.utc)
+    end = now + timedelta(hours=1)
+    request = ChronologicalEvaluationRequest(now, end,
+        (EnergyInterval(now, end, 4.5, 0),), (PriceSlot(now,end,.1),),
+        2.5, 4, headroom_kwh=5, usable_initial_kwh=5, charge_efficiency=.8, discharge_efficiency=.6)
+    plan = evaluate_chronological_request(request).plan
+    assert plan.ac_intervals[0].consumption_kwh == 4.5
+    assert plan.intervals[0].consumption_kwh == pytest.approx(7.5)
+    assert plan.deadline_required_kwh == pytest.approx(2.5)
+    assert plan.allocated_kwh == pytest.approx(2.5)
+
+
+def test_chronological_pv_serves_simultaneous_load_before_conversion():
+    from custom_components.omnibattery.pricing.chronological import EnergyInterval, stored_energy_intervals
+    now = datetime(2026, 10, 11, tzinfo=timezone.utc)
+    intervals = stored_energy_intervals((EnergyInterval(now,now+timedelta(hours=1),1,5),),.6,.5)
+    assert intervals[0].consumption_kwh == 0
+    assert intervals[0].solar_kwh == pytest.approx(2.4)
+
+
+def test_absorption_efficiency_excludes_hard_discharge_blocks():
+    from custom_components.omnibattery.pricing.curtailment import BatterySnapshot, snapshot_discharge_efficiency
+    healthy = BatterySnapshot('healthy',50,10,100,10,2500,True,True,.95)
+    blocked = BatterySnapshot('blocked',50,10,100,10,2500,True,False,.6)
+    assert snapshot_discharge_efficiency([healthy,blocked]) == .95

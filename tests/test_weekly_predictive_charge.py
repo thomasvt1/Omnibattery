@@ -71,12 +71,12 @@ def _run(ctrl):
 
 
 def test_weekly_day_charges_the_gap_the_sun_cannot_cover():
-    # Solar 5.0 - consumption 2.0 = 3.0 kWh surplus into the pack.
-    # Weekly needs 5.0 kWh → grid buys the remaining 2.0 kWh.
+    # Solar 5.0 - consumption 2.0 = 3.0 AC kWh, storing 2.55 kWh.
+    # Weekly needs 5.0 kWh → grid charging must store the remaining 2.45 kWh.
     result = _run(_ctrl([_Coord(50.0, 10.0)], weekly=True, solar="5.0"))
 
     assert result["should_charge"] is True
-    assert abs(result["energy_deficit_kwh"] - 2.0) < 0.05
+    assert abs(result["energy_deficit_kwh"] - 2.45) < 0.05
     assert result["weekly_full_charge_active"] is True
     assert "Weekly full charge" in result["reason"]
 

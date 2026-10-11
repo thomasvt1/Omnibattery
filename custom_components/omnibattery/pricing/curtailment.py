@@ -688,7 +688,7 @@ build_curtailment_plan = plan_curtailment
 def snapshot_discharge_efficiency(batteries: Sequence[BatterySnapshot]) -> float:
     """Stored-energy bound for valid future participants (temporary holds ignored)."""
     return min((float(b.discharge_efficiency) for b in batteries
-        if b.eligible and all(_finite(v) for v in (b.soc_pct, b.capacity_kwh,
+        if b.eligible and b.can_discharge and all(_finite(v) for v in (b.soc_pct, b.capacity_kwh,
              b.floor_soc_pct, b.max_soc_pct, b.discharge_efficiency, b.max_discharge_power_w))
         and b.capacity_kwh > 0 and b.max_soc_pct >= b.floor_soc_pct
         and b.max_discharge_power_w > 0 and 0 < b.discharge_efficiency <= 1), default=1.0)

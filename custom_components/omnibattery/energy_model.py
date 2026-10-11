@@ -77,7 +77,7 @@ def fleet_charge_efficiency(coordinators):
     return min((battery_energy_model(c).charge_efficiency for c in coordinators), default=0.85)
 
 
-def future_charge_efficiency(controller, batteries=None):
+def _future_efficiency(controller, batteries=None, *, direction):
     """Read-only bound for reachable and automatically owned future chargers.
 
     Temporary operating pauses and SOC targets do not erase known models.
@@ -88,11 +88,11 @@ def future_charge_efficiency(controller, batteries=None):
     peek_excluded = getattr(tracker, "peek_excluded", None)
 
     def charge_enabled(battery):
-        if not getattr(battery, "allow_charge", True):
+        if not getattr(battery, "allow_" + direction, True):
             return False
-        limit = getattr(battery, "effective_max_charge_power", None)
+        limit = getattr(battery, "effective_max_" + direction + "_power", None)
         if limit is None:
-            limit = getattr(battery, "max_charge_power", math.inf)
+            limit = getattr(battery, "max_" + direction + "_power", math.inf)
         try:
             return float(limit) > 0
         except (TypeError, ValueError):
@@ -108,4 +108,13 @@ def future_charge_efficiency(controller, batteries=None):
                  else getattr(battery, "name", None) in excluded)]
     # When no device is reachable, never replace a known lower efficiency
     # with a more optimistic legacy assumption while capacity is projected.
-    return fleet_charge_efficiency(candidates or fallback)
+    return min((getattr(battery_energy_model(c), direction + "_efficiency")
+                for c in candidates or fallback), default=0.85)
+
+
+def future_charge_efficiency(controller, batteries=None):
+    return _future_efficiency(controller, batteries, direction="charge")
+
+
+def future_discharge_efficiency(controller, batteries=None):
+    return _future_efficiency(controller, batteries, direction="discharge")

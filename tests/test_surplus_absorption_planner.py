@@ -354,3 +354,12 @@ def test_absorption_target_converts_ac_load_to_stored_energy():
         remaining_consumption_kwh=3, usable_energy_kwh=0, max_charge_power_w=10000,
         charge_efficiency=.6, discharge_efficiency=.6, deadline=DEADLINE, now=NOW)
     assert plan.target_kwh == pytest.approx(5)
+
+
+def test_hard_blocked_battery_cannot_fund_future_household_load():
+    from dataclasses import replace
+    healthy = _battery(soc=50)
+    blocked = replace(_battery(soc=100), can_discharge=False, discharge_efficiency=.6)
+    from custom_components.omnibattery.pricing.surplus_absorption import calculate_usable_energy_kwh
+    assert calculate_usable_energy_kwh([healthy,blocked]) == pytest.approx(4)
+    assert calculate_free_space_kwh([healthy,blocked]) == pytest.approx(5)

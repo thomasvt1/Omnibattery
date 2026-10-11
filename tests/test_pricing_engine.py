@@ -1931,8 +1931,8 @@ def test_extended_chronological_plan_uses_consumption_shape_by_date():
         if item.start.hour == 10 and item.start.minute == 0
     ]
     assert [(item.start.date(), item.consumption_kwh) for item in at_ten] == [
-        (now.date(), pytest.approx(1.0)),
-        (tomorrow, pytest.approx(9.0)),
+        (now.date(), pytest.approx(1.0 / .85)),
+        (tomorrow, pytest.approx(9.0 / .85)),
     ]
 
 

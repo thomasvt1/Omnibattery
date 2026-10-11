@@ -68,3 +68,9 @@ and convert claims into required stored energy using the participating fleet’s
 discharge efficiency. Live SOC targets recompute that conversion; 3 kWh of AC
 demand requires 5 kWh stored at 60% discharge efficiency. Directional loss
 assumptions are separate from configured round-trip price-arbitrage costs.
+
+Predictive scalar deficits and chronological deadlines also account for
+discharge losses. Simultaneous solar serves household load directly; only the
+net surplus crosses the charge converter and only net demand crosses the
+discharge converter. Plans retain the original AC intervals for dashboard
+simulation separately from stored-energy intervals used for scheduling.

@@ -195,6 +195,8 @@ def calculate_usable_energy_kwh(batteries: Sequence[BatterySnapshot]) -> float:
 def _usable_battery(snapshot: BatterySnapshot) -> bool:
     return (
         getattr(snapshot, "eligible", False)
+        and getattr(snapshot, "can_discharge", False)
+        and _finite(snapshot.max_discharge_power_w) and snapshot.max_discharge_power_w > 0
         and _finite(snapshot.soc_pct)
         and _finite(snapshot.capacity_kwh)
         and _finite(snapshot.max_soc_pct)
