@@ -138,3 +138,18 @@ async def test_history_restores_even_when_daily_totals_are_from_yesterday():
     await tracker.load_daily_energy()
     assert tracker.forecast_calibration.dump() == j.dump()
     assert not vars(tracker._controller)
+
+
+@pytest.mark.asyncio
+async def test_runtime_records_missing_production_and_curtailment(monkeypatch):
+    from custom_components.omnibattery.tracking.consumption_tracker import ConsumptionTracker
+    tracker = object.__new__(ConsumptionTracker)
+    calls = []
+    tracker.forecast_calibration = SimpleNamespace(observe=lambda *a, **kw: calls.append((a,kw)))
+    tracker._solar_runtime_context = lambda _: {'explicit_curtailment': True, 'battery_full_risk':False, 'export_zero':False}
+    tracker._calibration_solar_power_kw = lambda _: None
+    tracker._read_total_solar_power_kw = lambda: None
+    tracker._solar_profile = SimpleNamespace(mode='off')
+    await tracker.accumulate_daily_solar_energy()
+    assert calls[0][0][1] is None
+    assert calls[0][1] == {'censored':True}

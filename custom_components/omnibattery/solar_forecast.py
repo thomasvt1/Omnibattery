@@ -649,6 +649,8 @@ def read_remaining_solar_kwh(hass: Any, controller: Any, *,
                                       update_controller=update_controller)
     journal = getattr(getattr(controller, "_consumption_tracker", None), "forecast_calibration", None)
     # Legacy hour-only projections cannot identify an issuance date safely.
+    if result.source == "fallback" and update_controller and journal is not None:
+        controller.solar_forecast_calibration = {"calibrated": False, "reason": "forecast_unavailable"}
     if journal is None or isinstance(now, (float, int)) or result.source == "fallback":
         return result
     current = now or datetime.now(timezone.utc)
