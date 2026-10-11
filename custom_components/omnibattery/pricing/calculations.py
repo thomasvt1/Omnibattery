@@ -7,6 +7,7 @@ keeps thin delegating wrappers so its internal call sites are unchanged.
 """
 import logging
 import math
+from functools import wraps
 from datetime import datetime, timedelta
 
 from . import PriceSlot
@@ -20,6 +21,7 @@ from ..const import (
     PRICE_INTEGRATION_PVPC,
     PRICE_INTEGRATION_ZONNEPLAN,
 )
+from .time_math import instant, elapsed, time_max
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -63,6 +65,15 @@ def parse_prices_for_integration(integration_type: str, attrs: dict) -> list:
     return parse_nordpool_prices(attrs)
 
 
+def _validated_periods(parser):
+    """Reject non-finite prices and non-positive elapsed provider periods."""
+    @wraps(parser)
+    def read(*args, **kwargs):
+        return [slot for slot in parser(*args, **kwargs)
+                if math.isfinite(slot.price) and instant(slot.end) > instant(slot.start)]
+    return read
+
+
 def normalize_nordpool_hacs_price(value, attrs: dict) -> float:
     """Return a HACS Nordpool price in major currency per kWh.
 
@@ -83,6 +94,7 @@ def normalize_nordpool_hacs_price(value, attrs: dict) -> float:
     return price
 
 
+@_validated_periods
 def parse_nordpool_prices(attrs: dict) -> list:
     """Parse Nordpool / Energi Data Service price attributes.
 
@@ -111,9 +123,9 @@ def parse_nordpool_prices(attrs: dict) -> list:
                     end = datetime.fromisoformat(end)
                 # Convert to local datetime if timezone-aware
                 if hasattr(start, "tzinfo") and start.tzinfo is not None:
-                    start = dt_util.as_local(start).replace(tzinfo=None)
+                    start = dt_util.as_utc(start)
                 if hasattr(end, "tzinfo") and end.tzinfo is not None:
-                    end = dt_util.as_local(end).replace(tzinfo=None)
+                    end = dt_util.as_utc(end)
                 slots.append(
                     PriceSlot(
                         start=start,
@@ -126,6 +138,7 @@ def parse_nordpool_prices(attrs: dict) -> list:
     return slots
 
 
+@_validated_periods
 def parse_nordpool_service_prices(response: dict, area: str | None = None) -> list:
     """Parse ``nordpool.get_prices_for_date`` response data.
 
@@ -164,9 +177,9 @@ def parse_nordpool_service_prices(response: dict, area: str | None = None) -> li
             if isinstance(end, str):
                 end = _dt.fromisoformat(end)
             if hasattr(start, "tzinfo") and start.tzinfo is not None:
-                start = dt_util.as_local(start).replace(tzinfo=None)
+                start = dt_util.as_utc(start)
             if hasattr(end, "tzinfo") and end.tzinfo is not None:
-                end = dt_util.as_local(end).replace(tzinfo=None)
+                end = dt_util.as_utc(end)
             slots.append(
                 PriceSlot(start=start, end=end, price=float(price_val) / 1000.0)
             )
@@ -179,6 +192,7 @@ def parse_nordpool_service_prices(response: dict, area: str | None = None) -> li
     return slots
 
 
+@_validated_periods
 def parse_pvpc_prices(attrs: dict) -> list:
     """Parse PVPC (ESIOS REE, Spain) price attributes.
 
@@ -207,6 +221,7 @@ def parse_pvpc_prices(attrs: dict) -> list:
     return slots
 
 
+@_validated_periods
 def parse_ckw_prices(attrs: dict) -> list:
     """Parse CKW (Switzerland) price attributes.
 
@@ -236,17 +251,18 @@ def parse_ckw_prices(attrs: dict) -> list:
                 start = _dt.fromisoformat(start)
             if isinstance(end, str):
                 end = _dt.fromisoformat(end)
-            # Convert to local naive datetime
+            # Convert to aware UTC datetime
             if hasattr(start, "tzinfo") and start.tzinfo is not None:
-                start = dt_util.as_local(start).replace(tzinfo=None)
+                start = dt_util.as_utc(start)
             if hasattr(end, "tzinfo") and end.tzinfo is not None:
-                end = dt_util.as_local(end).replace(tzinfo=None)
+                end = dt_util.as_utc(end)
             slots.append(PriceSlot(start=start, end=end, price=float(price_val)))
         except Exception as exc:
             _LOGGER.debug("Dynamic pricing: failed to parse CKW entry %s: %s", entry, exc)
     return slots
 
 
+@_validated_periods
 def parse_epex_prices(attrs: dict) -> list:
     """Parse EPEX Spot (e.g. aWATTar) price attributes.
 
@@ -256,7 +272,7 @@ def parse_epex_prices(attrs: dict) -> list:
           "price_per_kwh": 0.14977}, ...]
     Hourly slots in EUR/kWh, typically covering today and tomorrow
     once published.
-    Returns list[PriceSlot] in local naive time.
+    Returns list[PriceSlot] in UTC for aware provider times.
     """
     from homeassistant.util import dt as dt_util
     from datetime import datetime as _dt
@@ -275,15 +291,16 @@ def parse_epex_prices(attrs: dict) -> list:
             if isinstance(end, str):
                 end = _dt.fromisoformat(end)
             if hasattr(start, "tzinfo") and start.tzinfo is not None:
-                start = dt_util.as_local(start).replace(tzinfo=None)
+                start = dt_util.as_utc(start)
             if hasattr(end, "tzinfo") and end.tzinfo is not None:
-                end = dt_util.as_local(end).replace(tzinfo=None)
+                end = dt_util.as_utc(end)
             slots.append(PriceSlot(start=start, end=end, price=float(price_val)))
         except Exception as exc:
             _LOGGER.debug("Dynamic pricing: failed to parse EPEX entry %s: %s", entry, exc)
     return slots
 
 
+@_validated_periods
 def parse_zonneplan_prices(attrs: dict) -> list:
     """Parse zonneplan_one hourly, quarter-hourly and legacy forecasts.
 
@@ -323,16 +340,14 @@ def parse_zonneplan_prices(attrs: dict) -> list:
             if isinstance(amount, bool):
                 continue
             price = float(amount) / 10_000_000
-            if not math.isfinite(price) or end <= start:
+            if not math.isfinite(price) or instant(end) <= instant(start):
                 continue
             if start.tzinfo is not None:
-                start = dt_util.as_local(start).replace(tzinfo=None)
+                start = dt_util.as_utc(start)
             if end.tzinfo is not None:
-                end = dt_util.as_local(end).replace(tzinfo=None)
-            # The shared planner uses naive local times. Omit intervals it
-            # cannot represent during a clock rollback rather than inventing
-            # a negative duration.
-            if end <= start:
+                end = dt_util.as_utc(end)
+            # Validate elapsed duration after normalization to UTC.
+            if instant(end) <= instant(start):
                 continue
             slots[(start, end)] = PriceSlot(start, end, price)
         except (AttributeError, KeyError, TypeError, ValueError, OverflowError) as exc:
@@ -340,6 +355,7 @@ def parse_zonneplan_prices(attrs: dict) -> list:
     return sorted(slots.values(), key=lambda slot: slot.start)
 
 
+@_validated_periods
 def parse_entsoe_prices(attrs: dict) -> list:
     """Parse ENTSO-e Transparency Platform prices (HA jaapp integration).
 
@@ -349,7 +365,7 @@ def parse_entsoe_prices(attrs: dict) -> list:
     Slots may be hourly or 15-minute. Each slot's end is inferred from the
     next slot's start time; the last slot inherits the previous delta and
     falls back to 60 minutes when only one entry exists.
-    Returns list[PriceSlot] in local naive time, in chronological order.
+    Returns list[PriceSlot] in UTC for aware provider times, in chronological order.
     """
     from homeassistant.util import dt as dt_util
     from datetime import datetime as _dt, timedelta as _td
@@ -366,7 +382,7 @@ def parse_entsoe_prices(attrs: dict) -> list:
                 if isinstance(start, str):
                     start = _dt.fromisoformat(start)
                 if hasattr(start, "tzinfo") and start.tzinfo is not None:
-                    start = dt_util.as_local(start).replace(tzinfo=None)
+                    start = dt_util.as_utc(start)
                 raw.append((start, float(price_val)))
             except Exception as exc:
                 _LOGGER.debug("Dynamic pricing: failed to parse ENTSO-e entry %s: %s", entry, exc)
@@ -387,6 +403,7 @@ def parse_entsoe_prices(attrs: dict) -> list:
     return slots
 
 
+@_validated_periods
 def parse_tibber_prices(prices_by_home: dict) -> list:
     """Parse the response of the ``tibber.get_prices`` service.
 
@@ -397,7 +414,7 @@ def parse_tibber_prices(prices_by_home: dict) -> list:
     Slots are typically 15-minute. Each slot's end is inferred from the next
     slot's start; the last slot inherits the previous delta (falling back to
     15 minutes). Tomorrow's slots are appended by Tibber after ~13:00.
-    Returns list[PriceSlot] in local naive time, chronologically sorted.
+    Returns list[PriceSlot] in UTC for aware provider times, chronologically sorted.
     """
     from homeassistant.util import dt as dt_util
     from datetime import datetime as _dt, timedelta as _td
@@ -426,7 +443,7 @@ def parse_tibber_prices(prices_by_home: dict) -> list:
             if isinstance(start, str):
                 start = _dt.fromisoformat(start)
             if hasattr(start, "tzinfo") and start.tzinfo is not None:
-                start = dt_util.as_local(start).replace(tzinfo=None)
+                start = dt_util.as_utc(start)
             raw.append((start, float(price_val)))
         except Exception as exc:
             _LOGGER.debug("Dynamic pricing: failed to parse Tibber entry %s: %s", entry, exc)
@@ -523,7 +540,7 @@ def select_cheapest_blocks(slots: list, hours_needed: float, slot_duration_h: fl
             candidate = available[i:i + window_size]
             # Verify slots are time-consecutive (gap <= 1 min tolerance)
             consecutive = all(
-                abs((sorted_slots[candidate[j + 1]].start - sorted_slots[candidate[j]].end).total_seconds()) < 60
+                instant(abs((elapsed(sorted_slots[candidate[j + 1]].start, sorted_slots[candidate[j]].end)).total_seconds())) < 60
                 for j in range(len(candidate) - 1)
             )
             if not consecutive:
@@ -531,7 +548,7 @@ def select_cheapest_blocks(slots: list, hours_needed: float, slot_duration_h: fl
             avg = sum(sorted_slots[idx].price for idx in candidate) / window_size
             # Prefer lower price; break ties by earlier start time
             if avg < best_avg or (avg == best_avg and best_window is not None and
-                    sorted_slots[candidate[0]].start < sorted_slots[best_window[0]].start):
+                    instant(sorted_slots[candidate[0]].start) < instant(sorted_slots[best_window[0]].start)):
                 best_avg = avg
                 best_window = list(candidate)
         return best_window
@@ -612,7 +629,7 @@ def expected_discharge_price(slots: list, hours_needed: float) -> float | None:
     total_price = 0.0
     hours = 0.0
     for slot in by_price:
-        duration = (slot.end - slot.start).total_seconds() / 3600.0
+        duration = (elapsed(slot.end, slot.start)).total_seconds() / 3600.0
         if duration <= 0:
             continue
         total_price += slot.price * duration
@@ -686,7 +703,7 @@ def effective_charge_ceiling(
     """
     if now is None:
         now = datetime.now()
-    future_slots = [s for s in slots if s.end > now]
+    future_slots = [s for s in slots if instant(s.end) > instant(now)]
 
     margin_ceiling = arbitrage_ceiling(
         future_slots, hours_needed, min_arbitrage_margin, round_trip_efficiency
@@ -724,7 +741,7 @@ def select_cheapest_hours(
         now = datetime.now()
 
     # Remove past slots
-    future_slots = [s for s in slots if s.end > now]
+    future_slots = [s for s in slots if instant(s.end) > instant(now)]
 
     # Apply price threshold filter
     if max_price_threshold is not None:
@@ -739,7 +756,7 @@ def select_cheapest_hours(
         return []
 
     # Dispatch to block strategy for sub-hourly granularity
-    slot_duration_h = (future_slots[0].end - future_slots[0].start).total_seconds() / 3600.0
+    slot_duration_h = (elapsed(future_slots[0].end, future_slots[0].start)).total_seconds() / 3600.0
     if slot_duration_h < 0.9:
         return select_cheapest_blocks(future_slots, hours_needed, slot_duration_h)
 
@@ -749,7 +766,7 @@ def select_cheapest_hours(
     selected = []
     hours_accumulated = 0.0
     for slot in sorted_slots:
-        slot_duration = (slot.end - slot.start).total_seconds() / 3600.0
+        slot_duration = (elapsed(slot.end, slot.start)).total_seconds() / 3600.0
         selected.append(slot)
         hours_accumulated += slot_duration
         if hours_accumulated >= hours_needed:
@@ -783,7 +800,7 @@ def select_cheapest_slots_by_duration(
     if hours_needed <= 0:
         return []
 
-    future_slots = [slot for slot in slots if slot.end > now]
+    future_slots = [slot for slot in slots if instant(slot.end) > instant(now)]
     if max_price_threshold is not None:
         future_slots = [
             slot for slot in future_slots if slot.price <= max_price_threshold
@@ -794,8 +811,8 @@ def select_cheapest_slots_by_duration(
     for slot in sorted(future_slots, key=lambda item: (item.price, item.start)):
         # A startup/manual evaluation may run inside the current interval.  Only
         # its remaining time can contribute energy toward the SOC target.
-        effective_start = max(slot.start, now)
-        duration_h = (slot.end - effective_start).total_seconds() / 3600.0
+        effective_start = time_max(slot.start, now)
+        duration_h = (elapsed(slot.end, effective_start)).total_seconds() / 3600.0
         if duration_h <= 0:
             continue
         selected.append(slot)

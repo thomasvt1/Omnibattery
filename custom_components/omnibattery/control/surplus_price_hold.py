@@ -41,6 +41,7 @@ from ..pricing.surplus_absorption import (
     hold_decision,
     plan_surplus_absorption,
 )
+from ..pricing.time_math import instant
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -565,7 +566,7 @@ class SurplusPriceHoldManager:
                 }
             )
             next_slot = next(
-                (slot for slot in plan.selected_slots if slot.start > now), None
+                (slot for slot in plan.selected_slots if instant(slot.start) > instant(now)), None
             )
             status["next_release_at"] = (
                 next_slot.start.isoformat() if next_slot is not None else None

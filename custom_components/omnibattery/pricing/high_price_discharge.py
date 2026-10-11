@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Sequence
 
 from .curtailment import BatterySnapshot
+from .time_math import instant, elapsed, time_min, time_max
 
 
 EPSILON = 1e-6
@@ -89,7 +90,7 @@ def _utc(moment: datetime) -> datetime:
 
 
 def _duration_hours(start: datetime, end: datetime) -> float:
-    return max(0.0, (end - start).total_seconds() / 3600.0)
+    return max(0.0, (elapsed(end, start)).total_seconds() / 3600.0)
 
 
 @dataclass(frozen=True)
@@ -154,7 +155,7 @@ class HighPriceDischargePlan:
 
     def allocation_at(self, moment: datetime) -> TriggerAllocation | None:
         for allocation in self.allocations:
-            if allocation.start <= moment < allocation.end:
+            if instant(allocation.start) <= instant(moment) < instant(allocation.end):
                 return allocation
         return None
 
@@ -163,7 +164,7 @@ class HighPriceDischargePlan:
         return sum(
             allocation.energy_kwh
             for allocation in self.allocations
-            if allocation.end > moment
+            if instant(allocation.end) > instant(moment)
         )
 
 
@@ -216,10 +217,10 @@ def _trim_slots(
             ):
                 continue
             start, end = _utc(slot.start), _utc(slot.end)
-            if end <= start or end <= now or start >= horizon_end:
+            if instant(end) <= instant(start) or instant(end) <= instant(now) or instant(start) >= instant(horizon_end):
                 continue
-            new_start = max(start, now)
-            new_end = min(end, horizon_end)
+            new_start = time_max(start, now)
+            new_end = time_min(end, horizon_end)
         except (TypeError, ValueError, OverflowError):
             continue
         if new_end <= new_start:
@@ -257,16 +258,16 @@ def _coverage_gap_reason(
     horizon right there, which - since it must reach ``horizon_end`` - is
     always a fail-safe.
     """
-    if working[0].start > now:
+    if instant(working[0].start) > instant(now):
         return REASON_COVERAGE_GAP
     previous_end = working[0].end
     for slot in working[1:]:
-        if slot.start > previous_end:
+        if instant(slot.start) > instant(previous_end):
             return REASON_COVERAGE_GAP
-        if slot.start < previous_end:
+        if instant(slot.start) < instant(previous_end):
             return REASON_COVERAGE_OVERLAP
         previous_end = slot.end
-    if previous_end < horizon_end:
+    if instant(previous_end) < instant(horizon_end):
         return REASON_COVERAGE_GAP
     return None
 
@@ -321,7 +322,7 @@ def _solar_refill_price(
                     and _finite(slot.solar_kwh) and _finite(slot.consumption_kwh)):
                 return None
             start, end = _utc(slot.start), _utc(slot.end)
-            if start != previous_end or end <= start:
+            if instant(start) != instant(previous_end) or instant(end) <= instant(start):
                 return None
             net = float(slot.solar_kwh) - float(slot.consumption_kwh)
             if not _finite(net):
@@ -379,7 +380,7 @@ def plan_high_price_discharge(
         )
 
     now, horizon_end = _utc(now), _utc(horizon_end)
-    if not horizon_end > now:
+    if not instant(horizon_end) > instant(now):
         return HighPriceDischargePlan(
             status=STATUS_FAIL_SAFE,
             reason=REASON_INVALID_HORIZON_END,
@@ -604,7 +605,7 @@ def plan_high_price_discharge(
                     break
                 if entry.remaining_kwh <= EPSILON:
                     continue
-                if (entry.start < slot.end or not _finite(entry.import_price)
+                if (instant(entry.start) < instant(slot.end) or not _finite(entry.import_price)
                         or float(slot.export_price) <= float(entry.import_price) + additional_cost):
                     break
                 take = min(left_to_assign, entry.remaining_kwh)
@@ -617,7 +618,7 @@ def plan_high_price_discharge(
                 continue
         else:
             linkable = sorted(
-                (entry for entry in ledger if entry.start >= slot.end and entry.remaining_kwh > EPSILON
+                (entry for entry in ledger if instant(entry.start) >= instant(slot.end) and entry.remaining_kwh > EPSILON
                  and _finite(entry.import_price)),
                 key=lambda entry: entry.start,
             )

@@ -25,6 +25,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Sequence
+from .time_math import instant, elapsed, time_min
 
 EPSILON = 1e-9
 _QUARTER = timedelta(minutes=15)
@@ -68,7 +69,7 @@ class ReserveSlot:
 
     @property
     def duration_hours(self) -> float:
-        return max(0.0, (self.end - self.start).total_seconds() / 3600.0)
+        return max(0.0, (elapsed(self.end, self.start)).total_seconds() / 3600.0)
 
 
 @dataclass
@@ -142,17 +143,17 @@ class ReservePlan:
         threshold = float(current_price) + max(0.0, self.min_saving)
         self.threshold_price = threshold
         self.horizon_demand_kwh = sum(
-            _positive(slot.net_demand_kwh) for slot in self.slots if slot.start >= now
+            _positive(slot.net_demand_kwh) for slot in self.slots if instant(slot.start) >= instant(now)
         )
         self.horizon_surplus_kwh = sum(
             _positive(slot.expected_surplus_kwh)
             for slot in self.slots
-            if slot.start >= now
+            if instant(slot.start) >= instant(now)
         )
         candidates = [
             slot
             for slot in self.slots
-            if slot.start >= now
+            if instant(slot.start) >= instant(now)
             and slot.net_demand_kwh > EPSILON
             and slot.price > threshold
         ]
@@ -225,9 +226,9 @@ class ReservePlan:
         credits = [0.0] * len(claims)
         pending = 0
         for slot in self.slots:
-            if slot.start < now:
+            if instant(slot.start) < instant(now):
                 continue
-            while pending < len(claims) and claims[pending][0].start <= slot.start:
+            while pending < len(claims) and instant(claims[pending][0].start) <= instant(slot.start):
                 take = claims[pending][1]
                 credit = min(take, stored)
                 stored -= credit
@@ -301,12 +302,12 @@ def consumption_by_slot(
     for slot in price_slots:
         start = slot.start
         end = slot.end
-        if end <= start:
+        if instant(end) <= instant(start):
             demand[slot] = 0.0
             continue
         total = 0.0
         cursor = start
-        while cursor < end:
+        while instant(cursor) < instant(end):
             index = (cursor.hour * 60 + cursor.minute) // 15
             bin_start = cursor.replace(
                 minute=(index * 15) % 60,
@@ -315,7 +316,7 @@ def consumption_by_slot(
                 microsecond=0,
             )
             bin_end = bin_start + _QUARTER
-            step_end = min(end, bin_end)
+            step_end = time_min(end, bin_end)
             values = dated.get(cursor.date()) or flat
             if values and 0 <= index < len(values):
                 share = (step_end - cursor).total_seconds() / _QUARTER.total_seconds()

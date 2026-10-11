@@ -1,5 +1,5 @@
 """Zonneplan provider contract and downstream pricing regression tests."""
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from zoneinfo import ZoneInfo
@@ -60,8 +60,8 @@ def test_sort_deduplicate_and_keep_negative_price():
 def test_local_timezone_conversion(monkeypatch):
     monkeypatch.setattr(dt_util, "DEFAULT_TIME_ZONE", ZoneInfo("Europe/Amsterdam"))
     slot = calculations.parse_zonneplan_prices({"forecast": [entry("2026-09-10T15:00:00Z", "2026-09-10T15:15:00Z")]})[0]
-    assert slot.start == datetime(2026, 9, 10, 17)
-    assert slot.end == datetime(2026, 9, 10, 17, 15)
+    assert slot.start == datetime(2026, 9, 10, 15, tzinfo=timezone.utc)
+    assert slot.end == datetime(2026, 9, 10, 15, 15, tzinfo=timezone.utc)
 
 
 def test_live_modern_hourly_forecast_entry(monkeypatch):
@@ -76,14 +76,16 @@ def test_live_modern_hourly_forecast_entry(monkeypatch):
         "sustainability_score": {"permille": 566},
     }
     slot = calculations.parse_prices_for_integration("zonneplan", {"forecast": [forecast_entry]})[0]
-    assert slot.start == datetime(2026, 9, 12, 21)
-    assert slot.end == datetime(2026, 9, 12, 22)
+    assert slot.start == datetime(2026, 9, 12, 19, tzinfo=timezone.utc)
+    assert slot.end == datetime(2026, 9, 12, 20, tzinfo=timezone.utc)
     assert slot.price == pytest.approx(0.3733562)
 
 
 def test_clock_rollback_never_emits_negative_duration(monkeypatch):
     monkeypatch.setattr(dt_util, "DEFAULT_TIME_ZONE", ZoneInfo("Europe/Amsterdam"))
-    assert calculations.parse_zonneplan_prices({"forecast": [entry("2026-10-25T02:45:00+02:00", "2026-10-25T02:00:00+01:00")]}) == []
+    slots = calculations.parse_zonneplan_prices({"forecast": [entry("2026-10-25T02:45:00+02:00", "2026-10-25T02:00:00+01:00")]})
+    assert len(slots) == 1
+    assert slots[0].end - slots[0].start == timedelta(minutes=15)
 
 
 def test_engine_dispatch_and_current_state_no_double_scaling():

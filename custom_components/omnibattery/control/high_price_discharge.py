@@ -51,6 +51,7 @@ from ..pricing.high_price_discharge import (
     plan_high_price_discharge,
 )
 from ..solar_forecast import get_configured_solar_forecast_sensor
+from ..pricing.time_math import instant, elapsed, time_min, time_max
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -121,11 +122,11 @@ def solar_wh_by_slot(slots: list, wh_hours: dict, horizon_end: datetime) -> dict
     covered_end = entries[-1][0] + period
     result = {}
     for slot in slots:
-        start = max(slot.start, horizon_end)
-        if slot.end <= start or start >= covered_end:
+        start = time_max(slot.start, horizon_end)
+        if instant(slot.end) <= instant(start) or instant(start) >= instant(covered_end):
             continue
         result[slot] = sum(
-            wh * max(0.0, (min(slot.end, moment + period) - max(start, moment))
+            wh * max(0.0, (elapsed(time_min(slot.end, moment + period), time_max(start, moment)))
                      .total_seconds()) / period.total_seconds()
             for moment, wh in entries
         ) / 1000.0
@@ -337,7 +338,7 @@ class HighPriceDischargeManager:
             # day's, which needs prices that are not published until ~13:00
             # and left the whole night in a coverage-gap fail-safe.
             horizon_end = pricing.energy_horizon_end(now - timedelta(days=1))
-            if now >= horizon_end:
+            if instant(now) >= instant(horizon_end):
                 horizon_end = pricing.energy_horizon_end(now)
             slots = self._build_horizon(pricing, now, horizon_end)
             max_power_w, margin, trigger_2, trigger_1, safety_margin, chronological_coverage = config
@@ -415,7 +416,7 @@ class HighPriceDischargeManager:
         # the planner never sells into nor links a buy-back to (#530).
         priced_end = max(slot.end for slot in slots)
         tail = (
-            [PriceSlot(priced_end, horizon_end, None)] if priced_end < horizon_end else []
+            [PriceSlot(priced_end, horizon_end, None)] if instant(priced_end) < instant(horizon_end) else []
         )
 
         forecast = pricing._profile_remaining_consumption(now, horizon_end)
@@ -465,13 +466,13 @@ class HighPriceDischargeManager:
         slots = sorted(
             (slot for slot in pricing.get_future_export_price_slots(
                 horizon_end=horizon_end + timedelta(hours=24)
-            ) if slot.end > horizon_end), key=lambda slot: slot.start
+            ) if instant(slot.end) > instant(horizon_end)), key=lambda slot: slot.start
         )
         solar = solar_wh_by_slot(slots, self._solar_wh_hours, horizon_end)
-        if not solar or slots[0].start > horizon_end:
+        if not solar or instant(slots[0].start) > instant(horizon_end):
             return ()
         covered = list(solar)
-        if any(previous.end != following.start
+        if any(instant(previous.end) != instant(following.start)
                for previous, following in zip(covered, covered[1:])):
             return ()
         forecast = pricing._profile_remaining_consumption(now, covered[-1].end)
@@ -485,11 +486,11 @@ class HighPriceDischargeManager:
         if not consumption:
             return ()
         def share(slot):
-            start = max(slot.start, horizon_end)
-            return (slot.end - start) / (slot.end - slot.start)
+            start = time_max(slot.start, horizon_end)
+            return (elapsed(slot.end, start)) / (elapsed(slot.end, slot.start))
 
         return tuple(HorizonSlot(
-            start=self._aware(max(slot.start, horizon_end)), end=self._aware(slot.end),
+            start=self._aware(time_max(slot.start, horizon_end)), end=self._aware(slot.end),
             export_price=slot.price, import_price=None,
             consumption_kwh=float(consumption.get(slot, 0.0) or 0.0) * share(slot),
             solar_kwh=solar[slot],
@@ -508,7 +509,7 @@ class HighPriceDischargeManager:
         overlapping = [
             other.price
             for other in import_slots
-            if other.start < slot.end and slot.start < other.end
+            if instant(other.start) < instant(slot.end) and instant(slot.start) < instant(other.end)
         ]
         if not overlapping:
             return None

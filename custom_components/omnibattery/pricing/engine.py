@@ -109,6 +109,7 @@ from .nordpool import (
     OfficialNordPoolSource,
     resolve_official_nordpool_source,
 )
+from .time_math import instant, elapsed, time_min, time_max, local_time
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -190,7 +191,7 @@ def _apply_excluded_demand_claim(
     today_indices = [
         index
         for index, (start, _end) in enumerate(boundaries)
-        if start < today_end and intervals_kwh[index] > 0.0
+        if instant(start) < instant(today_end) and intervals_kwh[index] > 0.0
     ]
     available = sum(intervals_kwh[index] for index in today_indices)
     if available <= 0.0:
@@ -355,7 +356,7 @@ class PricingManager:
         """
         current = now if isinstance(now, datetime) else self._now()
         horizon_end = self.energy_horizon_end(current)
-        if horizon_end <= current:
+        if instant(horizon_end) <= instant(current):
             return False
 
         try:
@@ -488,7 +489,7 @@ class PricingManager:
 
         # Nothing to do if we're still before the normal 00:05 window
         eval_cutoff = now.replace(hour=0, minute=5, second=0, microsecond=0)
-        if now < eval_cutoff:
+        if instant(now) < instant(eval_cutoff):
             _LOGGER.debug("Dynamic pricing: startup check skipped — before 00:05 window")
             return
 
@@ -558,7 +559,7 @@ class PricingManager:
         if self._controller.price_integration_type == PRICE_INTEGRATION_TIBBER:
             now = datetime.now()
             for slot in self._controller._tibber_price_slots:
-                if slot.start <= now < slot.end:
+                if instant(slot.start) <= instant(now) < instant(slot.end):
                     return slot.price
             return None
 
@@ -568,7 +569,7 @@ class PricingManager:
         if self._official_nordpool_source() is not None:
             now = datetime.now()
             for slot in self._controller._nordpool_price_slots:
-                if slot.start <= now < slot.end:
+                if instant(slot.start) <= instant(now) < instant(slot.end):
                     return slot.price
 
         if not self._controller.price_sensor:
@@ -581,19 +582,19 @@ class PricingManager:
         if self._controller.price_integration_type == PRICE_INTEGRATION_CKW:
             now = datetime.now()
             for slot in calculations.parse_ckw_prices(price_state.attributes):
-                if slot.start <= now < slot.end:
+                if instant(slot.start) <= instant(now) < instant(slot.end):
                     return slot.price
 
         if self._controller.price_integration_type == PRICE_INTEGRATION_EPEX:
             now = datetime.now()
             for slot in calculations.parse_epex_prices(price_state.attributes):
-                if slot.start <= now < slot.end:
+                if instant(slot.start) <= instant(now) < instant(slot.end):
                     return slot.price
 
         if self._controller.price_integration_type == PRICE_INTEGRATION_ENTSOE:
             now = datetime.now()
             for slot in calculations.parse_entsoe_prices(price_state.attributes):
-                if slot.start <= now < slot.end:
+                if instant(slot.start) <= instant(now) < instant(slot.end):
                     return slot.price
 
         try:
@@ -648,7 +649,7 @@ class PricingManager:
             not force
             and self._controller._tibber_price_slots
             and fetched is not None
-            and (now - fetched) < timedelta(minutes=TIBBER_REFRESH_MINUTES)
+            and (instant(now - fetched)) < instant(timedelta(minutes=TIBBER_REFRESH_MINUTES))
         ):
             return
 
@@ -707,7 +708,7 @@ class PricingManager:
             and self._controller._nordpool_price_slots
             and cached_source_key == source_key
             and fetched is not None
-            and (now - fetched) < timedelta(minutes=NORDPOOL_REFRESH_MINUTES)
+            and (instant(now - fetched)) < instant(timedelta(minutes=NORDPOOL_REFRESH_MINUTES))
         ):
             return
 
@@ -1012,7 +1013,7 @@ class PricingManager:
         now = datetime.now()
         end_of_day = now.replace(hour=23, minute=59, second=59, microsecond=0)
         effective_horizon = horizon_end if horizon_end is not None else end_of_day
-        return [s for s in raw_slots if s.end > now and s.start <= effective_horizon]
+        return [s for s in raw_slots if instant(s.end) > instant(now) and instant(s.start) <= instant(effective_horizon)]
 
     def _parse_price_data(self, *, horizon_end=None, quiet=False) -> list:
         """Read price sensor and return list[PriceSlot] for remaining slots up to horizon_end.
@@ -1082,7 +1083,7 @@ class PricingManager:
         if not self._controller._dynamic_pricing_schedule:
             return False
         now = datetime.now()
-        return any(s.start <= now < s.end for s in self._controller._dynamic_pricing_schedule.selected_slots)
+        return any(instant(s.start) <= instant(now) < instant(s.end) for s in self._controller._dynamic_pricing_schedule.selected_slots)
 
     def _negative_price_feature_enabled(self) -> bool:
         """Return the complete scope gate for opportunistic import charging."""
@@ -1186,7 +1187,7 @@ class PricingManager:
             plan
             and not bool(getattr(plan, "is_fail_safe", False))
             and any(
-                slot.start < risk.end and risk.start < slot.end
+                instant(slot.start) < instant(risk.end) and instant(risk.start) < instant(slot.end)
                 for risk in getattr(plan, "risk_slots", [])
             )
         )
@@ -1442,7 +1443,7 @@ class PricingManager:
         schedule.charging_needed = deficit_needed
         schedule.schedule_type = self._schedule_type_from_purposes(purposes.values())
         schedule.hours_needed = sum(
-            max(0.0, (slot.end - slot.start).total_seconds() / 3600.0)
+            max(0.0, (elapsed(slot.end, slot.start)).total_seconds() / 3600.0)
             for slot in keep
         )
         if keep:
@@ -1454,7 +1455,7 @@ class PricingManager:
             schedule.estimated_cost = sum(
                 slot.price
                 * effective_power_kw
-                * max(0.0, (slot.end - slot.start).total_seconds() / 3600.0)
+                * max(0.0, (elapsed(slot.end, slot.start)).total_seconds() / 3600.0)
                 for slot in keep
             )
         if not keep:
@@ -1510,7 +1511,7 @@ class PricingManager:
 
     def _curtailment_plan_slots(self, slots: list[PriceSlot], now: datetime) -> list[PriceSlot]:
         """Keep the daily solar plan on the current local day only."""
-        return [slot for slot in slots if slot.end > now and slot.start.date() == now.date()]
+        return [slot for slot in slots if instant(slot.end) > instant(now) and instant(local_time(slot.start).date()) == instant(now.date())]
 
     @staticmethod
     def _future_slot_matches_operation_block(slot: PriceSlot, operation_slot: dict) -> bool:
@@ -1533,12 +1534,12 @@ class PricingManager:
             day = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")[moment.weekday()]
             if days and day not in days:
                 return False
-            if start <= end:
-                return start <= moment.time() < end
-            return moment.time() >= start or moment.time() < end
+            if instant(start) <= instant(end):
+                return instant(start) <= instant(moment.time()) < instant(end)
+            return instant(moment.time()) >= instant(start) or instant(moment.time()) < instant(end)
 
         # Checking both ends catches ordinary and cross-midnight recurring slots.
-        return matches(slot.start) or matches(slot.end - timedelta(seconds=1))
+        return matches(slot.start) or matches(elapsed(slot.end, timedelta(seconds=1)))
 
     def _curtailment_operation_blocked_slots(self, slots: list[PriceSlot]) -> list[PriceSlot]:
         configured = self._controller.config_entry.data.get("no_discharge_time_slots", [])
@@ -1823,7 +1824,7 @@ class PricingManager:
         the forecast reserve.
         """
         risk_slots = [
-            slot for slot in getattr(plan, "risk_slots", []) if slot.end > now
+            slot for slot in getattr(plan, "risk_slots", []) if instant(slot.end) > instant(now)
         ]
         forecast_reserves = getattr(plan, "solar_reserve_by_slot", {}) or {}
         forecast_solar = getattr(plan, "solar_forecast_by_slot", {}) or {}
@@ -1929,7 +1930,7 @@ class PricingManager:
             0.0, float(getattr(self._controller, "max_charge_capacity", 0.0) or 0.0)
         )
         remaining_hours = sum(
-            max(0.0, (slot.end - max(now, slot.start)).total_seconds() / 3600.0)
+            max(0.0, (elapsed(slot.end, time_max(now, slot.start))).total_seconds() / 3600.0)
             for slot in risk_slots
         )
         plan.opportunistic_charge_limit_w = (
@@ -1967,7 +1968,7 @@ class PricingManager:
             return False
 
         future_risk_slots = [
-            slot for slot in getattr(plan, "risk_slots", []) if slot.end > now
+            slot for slot in getattr(plan, "risk_slots", []) if instant(slot.end) > instant(now)
         ]
         if not future_risk_slots:
             return False
@@ -1975,7 +1976,7 @@ class PricingManager:
         # Once the first risk window has started, pre-discharge cannot create
         # useful headroom for it anymore.  Live reserve accounting continues to
         # be updated by the normal runtime path.
-        if now >= min(slot.start for slot in future_risk_slots):
+        if instant(now) >= instant(min(slot.start for slot in future_risk_slots)):
             return False
 
         current_headroom = sum(
@@ -1996,7 +1997,7 @@ class PricingManager:
             return False
 
         selected_future_slot = any(
-            slot.end > now for slot in getattr(plan, "selected_discharge_slots", [])
+            instant(slot.end) > instant(now) for slot in getattr(plan, "selected_discharge_slots", [])
         )
         required = max(
             0.0,
@@ -2197,10 +2198,10 @@ class PricingManager:
         ), reason)
 
     def _current_curtailment_risk_slot(self, plan: CurtailmentPlan, now: datetime) -> PriceSlot | None:
-        return next((slot for slot in plan.risk_slots if slot.start <= now < slot.end), None)
+        return next((slot for slot in plan.risk_slots if instant(slot.start) <= instant(now) < instant(slot.end)), None)
 
     def _current_predischarge_slot(self, plan: CurtailmentPlan, now: datetime):
-        return next((slot for slot in plan.selected_discharge_slots if slot.start <= now < slot.end), None)
+        return next((slot for slot in plan.selected_discharge_slots if instant(slot.start) <= instant(now) < instant(slot.end)), None)
 
     def refresh_curtailment_runtime(self) -> None:
         """Apply or clear the live action, with fail-safe cleanup on errors."""
@@ -2310,7 +2311,7 @@ class PricingManager:
 
         self._refresh_curtailment_floor_blocks(snapshots)
         remaining_kwh = max(0.0, required - current_headroom)
-        hours_left = max(0.0, (active_slot.end - now).total_seconds() / 3600.0)
+        hours_left = max(0.0, (elapsed(active_slot.end, now)).total_seconds() / 3600.0)
         max_power = sum(
             snapshot.max_discharge_power_w
             for snapshot in snapshots
@@ -2363,7 +2364,7 @@ class PricingManager:
                 observed_start = observed_start.replace(tzinfo=None)
             if observed_end is not None and observed_end.tzinfo is not None:
                 observed_end = observed_end.replace(tzinfo=None)
-        if observed_start is not None and observed_start <= now:
+        if observed_start is not None and instant(observed_start) <= instant(now):
             start = observed_start
         else:
             # Charge Delay owns its persisted start marker. Once disabled it
@@ -2404,7 +2405,7 @@ class PricingManager:
                 end_hour = None
             if end_hour is not None:
                 end = midnight + timedelta(hours=float(end_hour))
-        if end is None or end <= start:
+        if end is None or instant(end) <= instant(start):
             return None, None
         return start, end
 
@@ -2624,8 +2625,8 @@ class PricingManager:
             horizon_end = horizon_end.replace(tzinfo=None)
         else:
             horizon_end = horizon_end.astimezone(now.tzinfo)
-        is_extended_horizon = horizon_end > control_horizon_end
-        if horizon_end <= now:
+        is_extended_horizon = instant(horizon_end) > instant(control_horizon_end)
+        if instant(horizon_end) <= instant(now):
             return None
         try:
             solar_profile_mode = normalize_solar_profile_mode(
@@ -2666,7 +2667,7 @@ class PricingManager:
             # remainder across the extra hours.
             forecast_total = (
                 forecast.energy_kwh
-                if horizon_end > daily_horizon_end
+                if instant(horizon_end) > instant(daily_horizon_end)
                 else decision_data.get("avg_consumption_kwh", forecast.energy_kwh)
             )
             consumption_total = max(0.0, float(forecast_total or 0.0))
@@ -2804,9 +2805,9 @@ class PricingManager:
                     max(
                         0.0,
                         consumption[index]
-                        - limit_kw * (end - start).total_seconds() / 3600.0,
+                        - limit_kw * (elapsed(end, start)).total_seconds() / 3600.0,
                     )
-                    if held_until is not None and start < held_until
+                    if held_until is not None and instant(start) < instant(held_until)
                     else consumption[index],
                     solar[index],
                 )
@@ -2876,7 +2877,7 @@ class PricingManager:
                 callable(weekly_pending)
                 and weekly_pending()
                 and solar_end_dt is not None
-                and solar_end_dt > now
+                and instant(solar_end_dt) > instant(now)
             ):
                 # An unreliable solar forecast is why this reservation exists;
                 # crediting it would reproduce #489.  Over-reserving is safe because
@@ -2885,12 +2886,11 @@ class PricingManager:
                     usable + headroom,
                     max(
                         0.0,
-                        usable
-                        - sum(
+                        elapsed(usable, sum(
                             item.consumption_kwh
                             for item in intervals
-                            if item.end <= solar_end_dt
-                        ),
+                            if instant(item.end) <= instant(solar_end_dt)
+                        )),
                     ),
                 )
                 decision_data["weekly_reserve_not_before"] = (
@@ -2907,7 +2907,7 @@ class PricingManager:
                 not diagnostic_only
                 and getattr(self._controller, "_predictive_min_soc_floor_enabled", False)
                 and solar_start_dt is not None
-                and solar_start_dt > now
+                and instant(solar_start_dt) > instant(now)
             ):
                 floor = max(
                     0.0,
@@ -2923,7 +2923,7 @@ class PricingManager:
                     * float(c.data.get("battery_total_energy", 0) or 0)
                     for c in eligible
                 )
-                pre_solar = [item for item in intervals if item.end <= solar_start_dt]
+                pre_solar = [item for item in intervals if instant(item.end) <= instant(solar_start_dt)]
                 # Already sitting under the floor is a requirement by itself.
                 # ``build_energy_deadlines`` only reports the projected drain
                 # and the clamp below hides that gap, so a battery that is held
@@ -3117,13 +3117,13 @@ class PricingManager:
             horizon_end = horizon_end.replace(tzinfo=None)
         elif now.tzinfo is not None:
             horizon_end = horizon_end.astimezone(now.tzinfo)
-        if horizon_end <= now:
+        if instant(horizon_end) <= instant(now):
             return []
 
         midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
         result: list[PriceSlot] = []
         current_day = midnight
-        while current_day < horizon_end:
+        while instant(current_day) < instant(horizon_end):
             day_name = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"][
                 current_day.weekday()
             ]
@@ -3156,10 +3156,10 @@ class PricingManager:
                     else [(current_day, end), (start, next_midnight)]
                 )
                 result.extend(
-                    PriceSlot(piece_start, min(piece_end, horizon_end), 0.0)
+                    PriceSlot(piece_start, time_min(piece_end, horizon_end), 0.0)
                     for piece_start, piece_end in pieces
-                    if piece_end > now
-                    and piece_start < horizon_end
+                    if instant(piece_end) > instant(now)
+                    and instant(piece_start) < instant(horizon_end)
                     and piece_end > piece_start
                 )
             current_day = next_midnight
@@ -3190,7 +3190,7 @@ class PricingManager:
         quota = sum(
             allocation.planned_battery_kwh
             for allocation in plan.allocations
-            if allocation.slot.start <= now < allocation.slot.end
+            if instant(allocation.slot.start) <= instant(now) < instant(allocation.slot.end)
         )
         aggregate_should_charge = bool(decision_data.get("should_charge", False))
         decision_data["aggregate_should_charge"] = aggregate_should_charge
@@ -3222,7 +3222,7 @@ class PricingManager:
         # predictive status entity with only timeline fields and ``unknown``
         # SOC/consumption/deficit attributes until tomorrow.  The planner below
         # already treats an empty candidate list as a balance-only evaluation.
-        if now < evaluation_start:
+        if instant(now) < instant(evaluation_start):
             return
         forecast_configured = bool(
             get_configured_solar_forecast_sensor(controller, "remaining")
@@ -3381,7 +3381,7 @@ class PricingManager:
         # Step 2: Parse price data (always, even without deficit — for diagnostics)
         horizon_end = self.energy_horizon_end(now)
         price_horizon = (
-            max(horizon_end, now + timedelta(hours=12))
+            time_max(horizon_end, now + timedelta(hours=12))
             if extended_horizon
             else horizon_end
         )
@@ -3538,7 +3538,7 @@ class PricingManager:
         if weekly_reserve_kwh > 0.0 and weekly_reserve_not_before is not None:
             post_solar = [
                 slot for slot in slots
-                if slot.start >= weekly_reserve_not_before
+                if instant(slot.start) >= instant(weekly_reserve_not_before)
             ]
             weekly_hours_needed = calculations.calculate_charging_hours_needed(
                 weekly_reserve_kwh,
@@ -3620,7 +3620,7 @@ class PricingManager:
         if tentative_plan.risk_slots:
             def _safe(slot: PriceSlot) -> bool:
                 return not any(
-                    slot.start < risk.end and risk.start < slot.end
+                    instant(slot.start) < instant(risk.end) and instant(risk.start) < instant(slot.end)
                     for risk in tentative_plan.risk_slots
                 )
 
@@ -3710,13 +3710,13 @@ class PricingManager:
         avg_price = sum(s.price for s in selected) / len(selected)
         effective_power_kw = min(self._contracted_charge_ceiling(), self._controller.max_charge_capacity) / 1000.0
         selected_hours = sum(
-            max(0.0, (slot.end - slot.start).total_seconds() / 3600.0)
+            max(0.0, (elapsed(slot.end, slot.start)).total_seconds() / 3600.0)
             for slot in selected
         )
         estimated_cost = sum(
             slot.price
             * effective_power_kw
-            * max(0.0, (slot.end - slot.start).total_seconds() / 3600.0)
+            * max(0.0, (elapsed(slot.end, slot.start)).total_seconds() / 3600.0)
             for slot in selected
         )
         opportunity_selected = bool(negative_price_selected)
@@ -3809,7 +3809,7 @@ class PricingManager:
         self._controller._active_dynamic_slot_purpose = None
         # Use the date of the selected slots (tomorrow at eval time) so the midnight
         # reset only fires the day AFTER the slots — not before they can be used.
-        slots_date = max(s.start.date() for s in selected) if selected else (now.date() + timedelta(days=1))
+        slots_date = max(local_time(s.start).date() for s in selected) if selected else (now.date() + timedelta(days=1))
         self._controller._dynamic_pricing_evaluated_date = slots_date
         self._controller._dp_eval_retry_count = 0
 
@@ -3903,15 +3903,15 @@ class PricingManager:
             return
 
         now = datetime.now()
-        upcoming = [s for s in self._controller._dynamic_pricing_schedule.selected_slots if s.start > now]
+        upcoming = [s for s in self._controller._dynamic_pricing_schedule.selected_slots if instant(s.start) > instant(now)]
         if not upcoming:
             return  # No future slots left
 
         next_slot = upcoming[0]
 
         # Only act during the ±5-minute window that is exactly 1 hour before the slot
-        pre_eval_time = next_slot.start - timedelta(hours=1)
-        if abs((now - pre_eval_time).total_seconds()) > 5 * 60:
+        pre_eval_time = elapsed(next_slot.start, timedelta(hours=1))
+        if abs((elapsed(now, pre_eval_time)).total_seconds()) > 5 * 60:
             return
 
         # Already evaluated this slot → nothing to do
@@ -3929,7 +3929,7 @@ class PricingManager:
 
         _LOGGER.info(
             "Dynamic pricing: running pre-slot re-evaluation for slot at %s",
-            next_slot.start.strftime("%H:%M")
+            local_time(next_slot.start).strftime("%H:%M")
         )
         await self._reevaluate_slot_purpose(next_slot, now)
 
@@ -4146,9 +4146,9 @@ class PricingManager:
         if getattr(controller, "_dp_excluded_demand_reeval_count", 0) >= EXCLUDED_DEMAND_REEVAL_MAX_PER_DAY:
             return False
         last_at = getattr(controller, "_dp_excluded_demand_reeval_at", None)
-        if last_at is not None and (now - last_at) < timedelta(
+        if last_at is not None and (instant(now - last_at)) < instant(timedelta(
             minutes=EXCLUDED_DEMAND_REEVAL_COOLDOWN_MIN
-        ):
+        )):
             return False
         # Live remaining forecast, not the stored daily figure: once the sun is
         # down there is nothing left to reserve or release.
@@ -4264,9 +4264,9 @@ class PricingManager:
         if self._roll_solar_forecast_reeval_day(now) >= SOLAR_FORECAST_REEVAL_MAX_PER_DAY:
             return False
         last_at = getattr(controller, "_dp_solar_forecast_reeval_at", None)
-        if last_at is not None and (now - last_at) < timedelta(
+        if last_at is not None and (instant(now - last_at)) < instant(timedelta(
             minutes=SOLAR_FORECAST_REEVAL_COOLDOWN_MIN
-        ):
+        )):
             return False
         return True
 
@@ -4282,7 +4282,7 @@ class PricingManager:
         slots = self.get_future_price_slots(horizon_end=end_of_day + timedelta(days=1))
         if not slots:
             return False
-        return max(slot.end for slot in slots) > end_of_day
+        return instant(max(slot.end for slot in slots)) > instant(end_of_day)
 
     def _is_price_publication_reeval(self, now: datetime) -> bool:
         """Return True when tomorrow's prices just became known.
@@ -4407,7 +4407,7 @@ class PricingManager:
         """Return the learned profile or its explicit daily fallback."""
         tracker = getattr(self._controller, "_consumption_tracker", None)
         profile = getattr(tracker, "consumption_profile", None)
-        if profile is None or end <= start:
+        if profile is None or instant(end) <= instant(start):
             return None
         try:
             if start.tzinfo is None:
@@ -4460,7 +4460,7 @@ class PricingManager:
             microsecond=0,
         ) + timedelta(days=1)
         hours_to_horizon_end = max(
-            0.0, (horizon_end - now).total_seconds() / 3600.0
+            0.0, (elapsed(horizon_end, now)).total_seconds() / 3600.0
         )
         overnight_hours = max(
             0.0, (horizon_end - end_of_day).total_seconds() / 3600.0
@@ -4856,7 +4856,7 @@ class PricingManager:
         consumption_rate_kwh_h = remaining_decision["consumption_rate_kwh_h"]
         horizon_end = self.energy_horizon_end(now)
         remaining_window_hours = max(
-            0.0, (horizon_end - now).total_seconds() / 3600.0
+            0.0, (elapsed(horizon_end, now)).total_seconds() / 3600.0
         )
 
         # Keep the source visible to the status/diagnostic sensor and to the
@@ -4932,7 +4932,7 @@ class PricingManager:
         # Price slots may cover today and the post-midnight leg, but never extend
         # beyond the shared control horizon.
         slots = self._parse_price_data(horizon_end=horizon_end)
-        slots = [slot for slot in slots if slot.end <= horizon_end]
+        slots = [slot for slot in slots if instant(slot.end) <= instant(horizon_end)]
         if not slots:
             _LOGGER.warning("Evening recharge: no price data available")
             return
@@ -5010,10 +5010,10 @@ class PricingManager:
                 purposes.values()
             )
             schedule.hours_needed = sum(
-                max(0.0, (slot.end - slot.start).total_seconds() / 3600.0)
+                max(0.0, (elapsed(slot.end, slot.start)).total_seconds() / 3600.0)
                 for slot in merged
             )
-            self._controller._dynamic_pricing_evaluated_date = max(s.start.date() for s in merged)
+            self._controller._dynamic_pricing_evaluated_date = max(local_time(s.start).date() for s in merged)
         else:
             avg_price = sum(s.price for s in selected) / len(selected)
             effective_power_kw = min(self._contracted_charge_ceiling(), self._controller.max_charge_capacity) / 1000.0
@@ -5030,7 +5030,7 @@ class PricingManager:
                 deficit_charging_needed=True,
                 deficit_hours_needed=hours_needed,
             )
-            self._controller._dynamic_pricing_evaluated_date = max(s.start.date() for s in selected)
+            self._controller._dynamic_pricing_evaluated_date = max(local_time(s.start).date() for s in selected)
 
         # Publish the evening target so the predictive enforcer charges to *this*
         # plan, not the stale 00:05 morning deficit (which assumed the solar that
@@ -5165,7 +5165,7 @@ class PricingManager:
         _LOGGER.info(
             "Dynamic pricing: remaining balance re-evaluated for slot %s, "
             "%.2f kWh still planned",
-            slot.start.strftime("%H:%M"),
+            local_time(slot.start).strftime("%H:%M"),
             float(
                 (self._controller._last_decision_data or {}).get(
                     "planned_grid_charge_kwh", 0.0
@@ -5262,7 +5262,7 @@ class PricingManager:
         _LOGGER.info(
             "Dynamic pricing: continuing into %s slot %s",
             purpose,
-            slot.start.strftime("%H:%M"),
+            local_time(slot.start).strftime("%H:%M"),
         )
 
     def _carry_over_slot_shortfall(
@@ -5301,14 +5301,14 @@ class PricingManager:
                 for slot in sorted(schedule.selected_slots, key=lambda item: item.start):
                     if (
                         (
-                            slot.start < datetime.now()
-                            and (incoming is None or slot.start != incoming.start)
+                            instant(slot.start) < instant(datetime.now())
+                            and (incoming is None or instant(slot.start) != instant(incoming.start))
                         )
                         or slot == active_slot
-                        or (deadline is not None and slot.end > deadline)
+                        or (deadline is not None and instant(slot.end) > instant(deadline))
                     ):
                         continue
-                    capacity = power_kw * max(0.0, (slot.end - slot.start).total_seconds() / 3600.0) * CHARGE_EFFICIENCY
+                    capacity = power_kw * max(0.0, (elapsed(slot.end, slot.start)).total_seconds() / 3600.0) * CHARGE_EFFICIENCY
                     current = float(schedule.slot_energy_targets_kwh.get(slot, 0.0) or 0.0)
                     take = min(remaining, max(0.0, capacity - current))
                     if take <= 0:
@@ -5541,7 +5541,7 @@ class PricingManager:
                     retained = [
                         slot
                         for slot in schedule.selected_slots
-                        if slot.start >= midnight
+                        if instant(slot.start) >= instant(midnight)
                     ]
                     schedule.selected_slots = retained
                     for attribute in (
@@ -5628,7 +5628,7 @@ class PricingManager:
                 (
                     slot
                     for slot in self._controller._dynamic_pricing_schedule.selected_slots
-                    if slot.start <= now < slot.end
+                    if instant(slot.start) <= instant(now) < instant(slot.end)
                 ),
                 None,
             )
@@ -5642,7 +5642,7 @@ class PricingManager:
                 self._controller._current_price_slot_active
                 and current_slot is not None
                 and active_slot is not None
-                and current_slot.start != active_slot.start
+                and instant(current_slot.start) != instant(active_slot.start)
             ):
                 await self._hand_over_dynamic_price_slot(current_slot, now)
 
@@ -5688,7 +5688,7 @@ class PricingManager:
                         self._controller._dp_completed_slots.add(current_slot.start)
                         _LOGGER.debug(
                             "Dynamic pricing: slot %s has no deficit left — skipping",
-                            current_slot.start.strftime("%H:%M"),
+                            local_time(current_slot.start).strftime("%H:%M"),
                         )
                     else:
                         # Entering an authorised typed slot.
@@ -5701,7 +5701,7 @@ class PricingManager:
                         _LOGGER.info(
                             "Dynamic pricing: entering %s slot %s",
                             effective_purpose,
-                            current_slot.start.strftime("%H:%M") if current_slot else "unknown",
+                            local_time(current_slot.start).strftime("%H:%M") if current_slot else "unknown",
                         )
 
             elif not in_slot and self._controller._current_price_slot_active:

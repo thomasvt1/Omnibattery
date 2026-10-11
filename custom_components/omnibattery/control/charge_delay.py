@@ -39,6 +39,7 @@ from ..solar_forecast import (
     get_configured_solar_forecast_sensor,
     read_remaining_solar_kwh,
 )
+from ..pricing.time_math import elapsed
 
 # Price-aware release only makes sense when charging is actually scheduled by
 # price. In time-slot mode prices drive nothing, so a configured price_sensor
@@ -1002,7 +1003,7 @@ class ChargeDelayManager:
                 return self._window_avg_price(start_h, charge_h, slots)
             for s in slots:
                 s_h = s.start.hour + s.start.minute / 60.0
-                s_end = s_h + (s.end - s.start).total_seconds() / 3600.0
+                s_end = s_h + (elapsed(s.end, s.start)).total_seconds() / 3600.0
                 if s_h - 1e-9 <= start_h < s_end:
                     return s.price
             return None
@@ -1046,7 +1047,7 @@ class ChargeDelayManager:
         covered = 0.0
         for s in slots:
             s_h = s.start.hour + s.start.minute / 60.0
-            s_end = s_h + (s.end - s.start).total_seconds() / 3600.0
+            s_end = s_h + (elapsed(s.end, s.start)).total_seconds() / 3600.0
             overlap = min(end_h, s_end) - max(start_h, s_h)
             if overlap > 0:
                 cost += s.price * overlap

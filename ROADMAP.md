@@ -8,7 +8,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 
 ### 1. Preserve absolute time across DST in price planning
 
-- Status: planned
+- Status: completed (implementation PR linked from the issue)
 - Issue: [1](https://github.com/thomasvt1/Omnibattery/issues/1)
 - Scope: Normalize provider price periods to UTC-aware instants, preserve compatibility at legacy wall-clock boundaries, validate period durations, and test spring/autumn transitions.
 - Acceptance: One actual hour remains one hour across both DST transitions; repeated periods remain distinct; pricing regression tests pass.

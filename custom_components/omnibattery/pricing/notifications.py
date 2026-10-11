@@ -8,6 +8,7 @@ controller keeps the thin ``_send_*`` wrappers that read its config and push the
 from __future__ import annotations
 
 from datetime import datetime
+from .time_math import instant, local_time
 
 
 def _forecast_notification_context(decision: dict) -> dict:
@@ -351,7 +352,7 @@ def format_dynamic_pricing_notification(
 
         cost_unit = unit.split("/")[0]  # "€/kWh" → "€", "CHF" → "CHF"
         slot_lines = "\n".join(
-            f"  • {s.start.strftime('%H:%M')}-{s.end.strftime('%H:%M')} → {s.price:.4f} {unit}"
+            f"  • {local_time(s.start).strftime('%H:%M')}-{local_time(s.end).strftime('%H:%M')} → {s.price:.4f} {unit}"
             + (
                 f", {float(schedule.slot_energy_targets_kwh[s]):.2f} kWh"
                 if s in getattr(schedule, "slot_energy_targets_kwh", {})
@@ -473,7 +474,7 @@ def format_slot_start_notification(
     ``schedule`` must be non-None (the caller guards on it).
     """
     remaining_slots = [
-        s for s in schedule.selected_slots if s.start > slot.start
+        s for s in schedule.selected_slots if instant(s.start) > instant(slot.start)
     ]
     next_slot_str = (
         f"Next slot: {remaining_slots[0].start.strftime('%H:%M')}"
@@ -487,7 +488,7 @@ def format_slot_start_notification(
     title = f"Predictive Charging STARTED ({slot.price:.4f} {unit})"
     message = (
         f"⚡ Charging at max {min(max_contracted_power, peak_limit) if peak_limit else max_contracted_power:g}W\n"
-        f"Slot: {slot.start.strftime('%H:%M')}-{slot.end.strftime('%H:%M')}\n"
+        f"Slot: {local_time(slot.start).strftime('%H:%M')}-{local_time(slot.end).strftime('%H:%M')}\n"
         f"{next_slot_str} · {remaining_str}"
     )
     return (title, message)
@@ -507,14 +508,14 @@ def format_dp_pre_slot_reevaluation_notification(
     context = _forecast_notification_context(decision)
     solar_str = f"{solar_forecast:.2f} kWh" if solar_forecast is not None else "N/A"
 
-    title = f"Predictive Charging: slot {slot.start.strftime('%H:%M')} confirmed — charging needed"
+    title = f"Predictive Charging: slot {local_time(slot.start).strftime('%H:%M')} confirmed — charging needed"
     message = (
         f"🔋 Battery: {avg_soc:.0f}% ({usable_energy:.2f} kWh usable)\n"
         f"{_build_forecast_lines(context, solar_str, context['consumption_kwh'])}"
         f"⚡ Energy deficit: {energy_deficit:.2f} kWh\n\n"
-        f"Slot: {slot.start.strftime('%H:%M')}–{slot.end.strftime('%H:%M')} "
+        f"Slot: {local_time(slot.start).strftime('%H:%M')}–{local_time(slot.end).strftime('%H:%M')} "
         f"@ {slot.price:.4f} {unit}\n"
-        f"→ Charging will activate at {slot.start.strftime('%H:%M')}"
+        f"→ Charging will activate at {local_time(slot.start).strftime('%H:%M')}"
     )
     return (title, message)
 
@@ -528,7 +529,7 @@ def format_evening_recharge_notification(
 ) -> tuple[str, str]:
     """Format the evening re-evaluation notification."""
     slots_str = ", ".join(
-        f"{s.start.strftime('%H:%M')}-{s.end.strftime('%H:%M')} ({s.price:.4f} {unit})"
+        f"{local_time(s.start).strftime('%H:%M')}-{local_time(s.end).strftime('%H:%M')} ({s.price:.4f} {unit})"
         for s in slots
     )
     title = "Predictive Charging: Evening re-evaluation"
