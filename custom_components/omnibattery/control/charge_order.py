@@ -47,6 +47,7 @@ import logging
 from homeassistant.util import dt as dt_util
 
 from ..const import SCARCITY_HYSTERESIS_KWH
+from ..energy_model import battery_energy_model
 from ..solar_forecast import read_remaining_solar_kwh
 
 _LOGGER = logging.getLogger(__name__)
@@ -85,7 +86,7 @@ def time_to_full_h(controller, coordinator) -> float:
     limit = controller._battery_power_limit(coordinator, True)
     if limit <= 0:
         return 0.0
-    return remaining / (limit / 1000.0)
+    return remaining / (limit / 1000.0 * battery_energy_model(coordinator).charge_efficiency)
 
 
 def charge_allocation_weights(batteries, limits) -> dict:
@@ -102,7 +103,7 @@ def charge_allocation_weights(batteries, limits) -> dict:
         remaining = battery_remaining_kwh(coordinator)
         if remaining is None:
             return dict(limits)
-        weights[coordinator] = remaining * 1000.0
+        weights[coordinator] = remaining * 1000.0 / battery_energy_model(coordinator).charge_efficiency
     if sum(weights.values()) <= 0:
         # Everything full: nothing to weigh, and dividing by it would raise.
         return dict(limits)

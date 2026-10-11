@@ -396,11 +396,13 @@ def _curtailment_info(controller) -> dict[str, object]:
 
 def _driver_info(coordinator) -> dict[str, Any]:
     """Static driver traits (no host/serial, which are identifiers)."""
+    from .energy_model import battery_energy_model
     driver = coordinator.driver
     caps = coordinator.capabilities
     return {
         "connected": driver.connected,
         "model_label": driver.model_label,
+        "energy_model": asdict(battery_energy_model(coordinator)),
         "capabilities": asdict(caps) if is_dataclass(caps) else str(caps),
     }
 

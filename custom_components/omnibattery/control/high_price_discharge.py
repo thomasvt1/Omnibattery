@@ -40,6 +40,7 @@ from homeassistant.loader import async_get_integration
 from homeassistant.util import dt as dt_util
 
 from ..const import PREDICTIVE_MODE_DYNAMIC_PRICING
+from ..energy_model import battery_energy_model
 from ..pricing import PriceSlot
 from ..pricing.curtailment import distribute_solar_forecast
 from ..pricing.discharge_reserve import consumption_by_slot
@@ -354,11 +355,12 @@ class HighPriceDischargeManager:
                 fill_slots=self._build_fill_slots(pricing, now, horizon_end) if trigger_1 else (),
                 additional_cost_per_kwh=margin,
                 max_export_power_w=max_power_w,
-                # Reuses the arbitrage knob rather than adding a second one.
-                # It is the round trip, so it understates the AC energy a full
-                # battery can deliver — the safe direction for a sale.
-                discharge_efficiency=float(
-                    getattr(self._controller, "round_trip_efficiency", 1.0) or 1.0
+                # Stored DC energy becomes delivered AC through one direction.
+                # The arbitrage round-trip setting remains a separate cost input.
+                round_trip_efficiency=float(getattr(self._controller, "round_trip_efficiency", 1.0)),
+                discharge_efficiency=min(
+                    (battery_energy_model(c).discharge_efficiency
+                     for c in getattr(self._controller, "coordinators", ())), default=1.0,
                 ),
             )
         except Exception as err:  # noqa: BLE001

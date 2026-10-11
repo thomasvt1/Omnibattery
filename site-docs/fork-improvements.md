@@ -52,3 +52,11 @@ Allocation floors each share to 5 W, then assigns affordable increments by large
 remainder. Individual ceilings and the aggregate request are enforced after
 rounding. A small unallocatable remainder is left unused rather than exceeding a
 limit. The existing phase-protection pass can further reduce this allocation.
+
+## Battery energy models
+
+Driver capabilities now carry explicit directional efficiencies and charge/discharge activation crossovers. Existing drivers retain documented assumptions (0.85 each direction, 1750 W charge and 1500 W discharge crossovers); these are not claims of measured performance. Round-trip efficiency is the product of the two directions, and the user arbitrage cost setting remains independent.
+
+Charge completion estimates and allocation weights account for AC-to-DC losses. Chronological charging uses the lowest eligible charge efficiency so switching between batteries cannot overstate stored energy. Export planning uses discharge efficiency, never the round-trip cost knob. Diagnostics expose the selected model and its provenance.
+
+Drivers may optionally supply `EfficiencyMeasurement` records under `efficiency_measurements["charge"|"discharge"]`: paired energy over the same isolated converter, at least 30 samples, 300 seconds and 0.05 kWh input, with a finite ratio from 0.5 to 1 and an aware observation timestamp no older than one day. PV-contaminated, stale or invalid measurements leave the driver's defaults in place. Current drivers do not claim measurements they cannot independently observe.

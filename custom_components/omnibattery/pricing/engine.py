@@ -109,6 +109,7 @@ from .nordpool import (
     OfficialNordPoolSource,
     resolve_official_nordpool_source,
 )
+from ..energy_model import fleet_charge_efficiency
 from .time_math import instant, elapsed, time_min, time_max, local_time
 
 if TYPE_CHECKING:
@@ -3002,6 +3003,7 @@ class PricingManager:
                     price_slots=tuple(slots),
                     total_required_kwh=required,
                     effective_power_kw=power_kw,
+                    charge_efficiency=fleet_charge_efficiency(eligible),
                     headroom_kwh=headroom,
                     usable_initial_kwh=usable,
                     max_price_threshold=price_ceiling,

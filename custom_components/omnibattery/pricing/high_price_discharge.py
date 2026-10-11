@@ -355,6 +355,7 @@ def plan_high_price_discharge(
     additional_cost_per_kwh: float = 0.0,
     max_export_power_w: float | None = None,
     discharge_efficiency: float = 1.0,
+    round_trip_efficiency: float | None = None,
     safety_margin_kwh: float = 0.0,
     fill_slots: Sequence[HorizonSlot] = (),
     chronological_coverage: bool = True,
@@ -418,7 +419,9 @@ def plan_high_price_discharge(
         )
     ceiling_w = float(max_export_power_w) if max_export_power_w is not None else math.inf
 
-    if not _finite(discharge_efficiency) or float(discharge_efficiency) <= 0:
+    cost_efficiency = discharge_efficiency if round_trip_efficiency is None else round_trip_efficiency
+    if (not _finite(discharge_efficiency) or not 0 < float(discharge_efficiency) <= 1
+            or not _finite(cost_efficiency) or not 0 < float(cost_efficiency) <= 1):
         return HighPriceDischargePlan(
             status=STATUS_FAIL_SAFE,
             reason=REASON_INVALID_CONFIGURATION,
@@ -504,7 +507,7 @@ def plan_high_price_discharge(
                 trigger_1_reason = REASON_NO_REFILL_PRICE
             else:
                 trigger_1_reason = REASON_NO_ELIGIBLE_CANDIDATES
-                threshold = refill_price / efficiency + additional_cost
+                threshold = refill_price / float(cost_efficiency) + additional_cost
                 budget_left = budget
                 ranked = sorted(
                     (slot for slot in working if _finite(slot.export_price)

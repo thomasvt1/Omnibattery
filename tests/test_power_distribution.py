@@ -326,3 +326,16 @@ def test_quantization_preserves_system_budget_and_mixed_limits():
     coords=[_coord('a',803),_coord('b',803)]
     result=_build(coords)._distribute_power_by_limits(1598,coords,False)
     assert sum(result.values())==1595
+
+
+def test_driver_specific_activation_crossover(monkeypatch):
+    from dataclasses import replace
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
+    a, b = _coord('a',2500,soc=80), _coord('b',2500,soc=50)
+    default = _build([a,b])
+    assert default._select_batteries_for_operation(1400,[a,b],False)==[a]
+    original=FakeCoordinator.capabilities.fget
+    monkeypatch.setattr(FakeCoordinator,"capabilities",property(lambda c: replace(
+        original(c),energy_model=BatteryEnergyModel(discharge_crossover_w=1000)) if c is a else original(c)))
+    tailored = _build([a,b])
+    assert tailored._select_batteries_for_operation(1400,[a,b],False)==[a,b]

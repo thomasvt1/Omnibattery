@@ -26,8 +26,10 @@ in incrementally; see ``docs/plans/driver_abstraction.md`` for the phase plan.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
+
+from ..energy_model import BatteryEnergyModel
 
 
 # Optional telemetry key a driver may publish alongside ``battery_power``.
@@ -163,6 +165,8 @@ class DriverCapabilities:
     # else reports its own. A control that offers a value the driver's write path
     # rejects is worse than no control: the entity shows the new number while the
     # hardware backstop never moves (#495).
+    energy_model: BatteryEnergyModel = field(default_factory=BatteryEnergyModel)
+
     charge_cutoff_range: tuple[float, float] = (50.0, 100.0)
     discharge_cutoff_range: tuple[float, float] = (12.0, 50.0)
 

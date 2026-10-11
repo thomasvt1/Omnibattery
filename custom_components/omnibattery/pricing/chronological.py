@@ -95,9 +95,12 @@ class ChronologicalEvaluationRequest:
     usable_initial_kwh: float = 0.0
     max_price_threshold: float | None = None
     deadlines: tuple[EnergyDeadline, ...] = ()
+    charge_efficiency: float = CHARGE_EFFICIENCY
 
     def __post_init__(self) -> None:
-        if self.horizon_end <= self.now:
+        if not math.isfinite(self.charge_efficiency) or not 0 < self.charge_efficiency <= 1:
+            raise ValueError("charge efficiency must be finite and within (0, 1]")
+        if instant(self.horizon_end) <= instant(self.now):
             raise ValueError("chronological horizon must end after now")
         # Accept ordinary sequences at the public boundary but retain only
         # immutable containers while the evaluator is running.
@@ -495,6 +498,7 @@ def evaluate_chronological_request(
         headroom_kwh=request.headroom_kwh,
         usable_initial_kwh=request.usable_initial_kwh,
         max_price_threshold=request.max_price_threshold,
+        charge_efficiency=request.charge_efficiency,
     )
     return ChronologicalEvaluationResult(
         plan=plan,
