@@ -1900,6 +1900,7 @@ class ChargeDischargeController:
     def _daily_operation_battery_inputs(self) -> list[Any]:
         """Return safe battery snapshots for the pure future projection."""
         from .pricing.daily_timeline import BatteryProjectionInput
+        from .energy_model import battery_energy_model
 
         result = []
         for index, coordinator in enumerate(getattr(self, "coordinators", ())):
@@ -1919,6 +1920,7 @@ class ChargeDischargeController:
                 or data.get("max_discharge_power"),
                 0.0,
             )
+            model = battery_energy_model(coordinator)
             result.append(
                 BatteryProjectionInput(
                     key=str(getattr(coordinator, "name", None) or f"battery_{index}"),
@@ -1930,6 +1932,8 @@ class ChargeDischargeController:
                     max_soc_pct=self._daily_operation_float(
                         getattr(coordinator, "max_soc", 100.0), 100.0
                     ),
+                    charge_efficiency=model.charge_efficiency,
+                    discharge_efficiency=model.discharge_efficiency,
                     charge_power_w=max(0.0, charge_limit),
                     discharge_power_w=max(0.0, discharge_limit),
                     can_charge=not manual_owned,

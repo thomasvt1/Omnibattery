@@ -127,3 +127,18 @@ def test_future_model_uses_identity_and_does_not_reset_expired_exclusions():
     before=dict(tracker.batteries[excluded])
     assert future_charge_efficiency(ctrl)==.6
     assert tracker.batteries[excluded]==before
+
+
+def test_dashboard_projection_uses_each_battery_directional_efficiency():
+    from custom_components.omnibattery import ChargeDischargeController
+    a = battery(BatteryEnergyModel(.6, .95))
+    b = battery(BatteryEnergyModel(.9, .7))
+    for device in (a, b):
+        device.data = {"battery_soc": 50, "battery_total_energy": 10}
+        device.max_charge_power = device.max_discharge_power = 1000
+    controller = SimpleNamespace(
+        coordinators=[a, b], _is_battery_manual_owned=lambda _: False,
+        _daily_operation_float=ChargeDischargeController._daily_operation_float,
+    )
+    snapshots = ChargeDischargeController._daily_operation_battery_inputs(controller)
+    assert [(s.charge_efficiency, s.discharge_efficiency) for s in snapshots] == [(.6, .95), (.9, .7)]
