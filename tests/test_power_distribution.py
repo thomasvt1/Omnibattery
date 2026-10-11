@@ -20,6 +20,7 @@ These same assertions ran green against the real controller before the move
 from __future__ import annotations
 
 import time
+import pytest
 from types import SimpleNamespace
 
 from custom_components.omnibattery.control.power_distribution import (
@@ -339,3 +340,19 @@ def test_driver_specific_activation_crossover(monkeypatch):
         original(c),energy_model=BatteryEnergyModel(discharge_crossover_w=1000)) if c is a else original(c)))
     tailored = _build([a,b])
     assert tailored._select_batteries_for_operation(1400,[a,b],False)==[a,b]
+
+
+@pytest.mark.parametrize('charging',[True,False])
+def test_heterogeneous_fleet_deactivates_at_last_selected_boundary(monkeypatch,charging):
+    from dataclasses import replace
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
+    socs=[20,50,80] if charging else [80,50,20]
+    coords=[_coord(name,2500,soc=soc) for name,soc in zip(['a','b','c'],socs)]
+    crossovers=dict(zip(coords,[1000,2400,1500]))
+    original=FakeCoordinator.capabilities.fget
+    monkeypatch.setattr(FakeCoordinator,'capabilities',property(lambda c:replace(original(c),
+        energy_model=BatteryEnergyModel(charge_crossover_w=crossovers[c],
+                                       discharge_crossover_w=crossovers[c]))))
+    manager=_build(coords,**({'active_charge':coords} if charging else {'active_discharge':coords}))
+    for _ in range(3):
+        assert manager._select_batteries_for_operation(3000,coords,charging)==coords[:2]

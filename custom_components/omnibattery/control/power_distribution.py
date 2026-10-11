@@ -322,11 +322,10 @@ class PowerDistribution:
                     limit = self._controller._battery_power_limit(battery, is_charging)
                     if limit <= 0:
                         continue
-                    first_limit = (
-                        self._controller._battery_power_limit(selected[0], is_charging)
-                    ) if selected else limit
+                    boundary = selected[-1] if selected else battery
+                    boundary_limit = self._controller._battery_power_limit(boundary, is_charging)
                     act_thr = max(MULTI_BATTERY_MIN_ACTIVATION,
-                                  min(MULTI_BATTERY_MAX_ACTIVATION, crossover(selected[0] if selected else battery) / first_limit))
+                                  min(MULTI_BATTERY_MAX_ACTIVATION, crossover(boundary) / boundary_limit))
                     deact_thr = max(MULTI_BATTERY_MIN_ACTIVATION, act_thr - MULTI_BATTERY_HYSTERESIS_GAP)
                     if total_power > combined_capacity * deact_thr:
                         selected.append(battery)
