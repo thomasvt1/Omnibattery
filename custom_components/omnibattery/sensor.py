@@ -61,6 +61,8 @@ from .sensors.calculated_sensors import (
     CUMULATIVE_DAILY_ENERGY_SENSOR_DEFINITIONS,
 )
 
+from .control.explanations import battery_explanations
+
 _LOGGER = logging.getLogger(__name__)
 
 
@@ -405,6 +407,7 @@ class MarstekVenusSensor(CoordinatorEntity, SensorEntity):
             return None
         model = getattr(self.coordinator.driver, "model_label", None)
         attributes = {"model": model} if model else {}
+        attributes["control_device_key"] = self.coordinator.device_key
         if getattr(self.coordinator.capabilities, "has_mppt_pv", False):
             attributes["dc_pv_connected"] = has_connected_mppt_pv(self.coordinator)
         return attributes or None
@@ -1081,6 +1084,7 @@ class IntegrationStatusSensor(SensorEntity):
         """Return current controller details for diagnostics."""
         c = self._controller
         attrs = {
+            "battery_decisions": battery_explanations(c),
             "setpoint_active": c.compute_active_target(),
             "previous_power_w": c.previous_power,
             "first_execution": c.first_execution,

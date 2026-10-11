@@ -36,7 +36,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 
 ### 5. Improve control accessibility and battery decision explanations
 
-- Status: planned
+- Status: completed (implementation PR linked from the issue)
 - Issue: [5](https://github.com/thomasvt1/Omnibattery/issues/5)
 - Scope: Associate accessible labels with switches/selects/ranges, expose switch state semantics, support keyboard help, and show current owner/request/limits/release evidence for each battery.
 - Acceptance: Controls have accessible names and switch states; keyboard users can reach help; explanations use live evidence and show unknown release times honestly.

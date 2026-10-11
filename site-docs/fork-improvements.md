@@ -36,3 +36,12 @@ its control and suppresses duplicate writes to the same entity. The status banne
 announces acceptance or failure; errors clear optimistic slider state and restore
 the latest Home Assistant value. Acceptance means the service completed, not that
 the battery has reached the requested power. Verify response in live telemetry.
+
+## Accessible control evidence
+
+Switches expose their checked state to assistive technology; switches, selects
+and ranges have accessible names. Control help supports Enter/Space and Escape.
+Battery cards show the live control owner, last commanded power, configured
+ceilings, blocking reasons and known release times. Unknown commands or release
+times remain unknown. These values describe control evidence, not proof that a
+physical battery followed the command.
