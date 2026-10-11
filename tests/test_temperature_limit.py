@@ -263,3 +263,30 @@ def test_invalid_temperature_holds_hot_cap_then_expires(monkeypatch, invalid):
     coord.data['internal_temperature']=35
     assert mgr.apply_temperature_limit(coord,2500)==2500
     assert mgr.get_status()['bat']['telemetry_status']=='valid'
+
+
+def test_cached_temperature_does_not_refresh_hold(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from custom_components.omnibattery.control import temperature_limit as module
+    coord=_Coord(data={'internal_temperature':55})
+    stamp=datetime.now(timezone.utc)
+    coord._key_update_times={'internal_temperature':stamp}
+    clock=[0.0]
+    monkeypatch.setattr(module.time,'monotonic',lambda:clock[0])
+    mgr=_mgr(coords=[coord])
+    assert mgr.apply_temperature_limit(coord,2500)==1000
+    coord._key_update_times['internal_temperature']=stamp-timedelta(seconds=90)
+    clock[0]=90
+    assert mgr.apply_temperature_limit(coord,2500)==1000
+    assert mgr.get_status()['bat']['telemetry_status']=='held'
+    clock[0]=301
+    assert mgr.apply_temperature_limit(coord,2500)==2500
+    assert mgr.get_status()['bat']['telemetry_status']=='unavailable'
+
+
+def test_cool_reading_does_not_cache_soc_cap():
+    coord=_Coord(data={'internal_temperature':35})
+    mgr=_mgr(coords=[coord])
+    assert mgr.apply_temperature_limit(coord,200)==200
+    coord.data['internal_temperature']=None
+    assert mgr.apply_temperature_limit(coord,2500)==2500

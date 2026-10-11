@@ -1531,12 +1531,13 @@ class PricingManager:
             return False
 
         def matches(moment: datetime) -> bool:
+            moment = local_time(moment)
             day = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")[moment.weekday()]
             if days and day not in days:
                 return False
-            if instant(start) <= instant(end):
-                return instant(start) <= instant(moment.time()) < instant(end)
-            return instant(moment.time()) >= instant(start) or instant(moment.time()) < instant(end)
+            if start <= end:
+                return start <= moment.time() < end
+            return moment.time() >= start or moment.time() < end
 
         # Checking both ends catches ordinary and cross-midnight recurring slots.
         return matches(slot.start) or matches(elapsed(slot.end, timedelta(seconds=1)))
@@ -4175,6 +4176,11 @@ class PricingManager:
         into the curve drops it by a step. Neither is evidence of a revision.
         """
         solar_input = self._read_remaining_solar_input(now=now, update_controller=False)
+        # Explicit invalidity withdraws forecast energy, unlike a transient dropout.
+        if solar_input is not None and getattr(solar_input, "fallback_reason", None) in (
+            "stale", "wrong_date", "invalid_date", "invalid_timestamp", "future_timestamp",
+        ):
+            return 0.0
         if solar_input is None or solar_input.conversion not in (
             "none",
             "dated_periods",
@@ -4248,6 +4254,11 @@ class PricingManager:
         controller = self._controller
         ref = getattr(controller, "_dp_last_eval_solar_remaining_kwh", None)
         ref_produced = getattr(controller, "_dp_last_eval_solar_produced_kwh", None)
+        solar_input = self._read_remaining_solar_input(now=now, update_controller=False)
+        if ref is not None and ref > 0 and solar_input is not None and getattr(solar_input, "fallback_reason", None) in (
+            "stale", "wrong_date", "invalid_date", "invalid_timestamp", "future_timestamp",
+        ):
+            return True
         if ref is None or ref_produced is None:
             return False
         if now.hour >= 23:

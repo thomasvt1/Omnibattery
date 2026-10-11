@@ -91,3 +91,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 - Check the exact PR head and available CI results before merging; report any external workflow limitations.
 - Keep documentation, fallbacks, and diagnostics consistent with the implemented behavior.
 - Finish with the complete Python and browser suites, a clean checkout, and merged PR links.
+
+## Review gate
+
+Read every review summary, inline comment and PR conversation comment before merging. Wait for in-progress reviews to finish, fix actionable findings, and inspect the final head again. PRs #13–#17 received findings after their initial merges; a corrective PR addresses local-time consumers, forecast invalidation, stale thermal readings, concurrent command failures and explanation/accessibility gaps before item 7 resumes.

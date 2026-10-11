@@ -1791,6 +1791,7 @@ class MarstekVenusPanel extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this._hass = null;
     this._pendingCommands = new Set();
+    this._commandFailures = new Map();
     this._panelConfig = {};
     this._built = false;
     this._view = "resumen";
@@ -1824,6 +1825,12 @@ class MarstekVenusPanel extends HTMLElement {
     status.textContent = message;
   }
 
+  _reportCommand(kind, message) {
+    if (this._commandFailures.size) {
+      this._commandFeedback("failed", [...this._commandFailures.entries()].map(([id, error]) => `${id}: ${error}`).join("; "));
+    } else this._commandFeedback(kind, message);
+  }
+
   async _sendCommand(domain, service, data, control) {
     const id = data.entity_id;
     if (this._pendingCommands.has(id)) return false;
@@ -1832,10 +1839,11 @@ class MarstekVenusPanel extends HTMLElement {
       control.disabled = true;
       control.setAttribute("aria-busy", "true");
     }
-    this._commandFeedback("pending", this._t("commandPending"));
+    this._commandFailures.delete(id);
+    this._reportCommand("pending", this._t("commandPending"));
     try {
       await this._hass.callService(domain, service, data);
-      this._commandFeedback("accepted", this._t("commandAccepted"));
+      this._reportCommand("accepted", this._t("commandAccepted"));
       return true;
     } catch (error) {
       if (control) {
@@ -1846,7 +1854,8 @@ class MarstekVenusPanel extends HTMLElement {
         if (actual != null && !["unknown", "unavailable"].includes(actual)) control.value = actual;
         control.dispatchEvent(new Event("change-failed"));
       }
-      this._commandFeedback("failed", this._t("commandFailed", { error: error?.message || String(error) }));
+      this._commandFailures.set(id, this._t("commandFailed", { error: error?.message || String(error) }));
+      this._reportCommand("failed", "");
       this._update();
       return false;
     } finally {
@@ -6015,8 +6024,8 @@ class MarstekVenusPanel extends HTMLElement {
       const evidence = states.map(state => state.attributes?.battery_decisions?.[b.controlDeviceKey]).find(Boolean);
       const unknown = this._t("decisionUnknown");
       r.decision.textContent = evidence ? this._t("decisionEvidence", {
-        owner: evidence.owner,
-        power: evidence.commanded_power_w ?? unknown,
+        owner: evidence.available ? evidence.owner : unknown,
+        power: evidence.available ? (evidence.commanded_power_w ?? unknown) : unknown,
         charge: evidence.charge_ceiling_w ?? unknown,
         discharge: evidence.discharge_ceiling_w ?? unknown,
         limits: Object.entries(evidence.blockers || {}).flatMap(([direction, reasons]) => reasons.map(reason => `${direction}: ${reason}`)).join("; ") || "—",
@@ -7260,6 +7269,9 @@ class MarstekVenusPanel extends HTMLElement {
     b.className = "card-info";
     b.setAttribute("aria-label", "info");
     b.title = text;
+    b.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { this._hideInfoPopover(); b.focus(); }
+    });
     b.innerHTML = `<ha-icon icon="mdi:information-outline"></ha-icon>`;
     b.addEventListener("click", (e) => {
       e.stopPropagation();

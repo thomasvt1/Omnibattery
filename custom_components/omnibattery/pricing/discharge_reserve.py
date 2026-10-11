@@ -25,7 +25,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Sequence
-from .time_math import instant, elapsed, time_min
+from .time_math import instant, elapsed, time_min, local_time
 
 EPSILON = 1e-9
 _QUARTER = timedelta(minutes=15)
@@ -306,18 +306,16 @@ def consumption_by_slot(
             demand[slot] = 0.0
             continue
         total = 0.0
-        cursor = start
-        while instant(cursor) < instant(end):
-            index = (cursor.hour * 60 + cursor.minute) // 15
-            bin_start = cursor.replace(
-                minute=(index * 15) % 60,
-                hour=(index * 15) // 60,
-                second=0,
-                microsecond=0,
-            )
-            bin_end = bin_start + _QUARTER
-            step_end = time_min(end, bin_end)
-            values = dated.get(cursor.date()) or flat
+        cursor = instant(start)
+        while cursor < instant(end):
+            local_cursor = local_time(cursor)
+            index = (local_cursor.hour * 60 + local_cursor.minute) // 15
+            # Step in elapsed time, even through a repeated or missing local hour.
+            seconds_into_bin = (local_cursor.minute % 15) * 60 + local_cursor.second
+            seconds_into_bin += local_cursor.microsecond / 1_000_000
+            bin_end = cursor + _QUARTER - timedelta(seconds=seconds_into_bin)
+            step_end = min(instant(end), bin_end)
+            values = dated.get(local_cursor.date()) or flat
             if values and 0 <= index < len(values):
                 share = (step_end - cursor).total_seconds() / _QUARTER.total_seconds()
                 total += _positive(values[index]) * share

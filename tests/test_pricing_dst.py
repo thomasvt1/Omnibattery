@@ -44,3 +44,32 @@ def test_repeated_hour_periods_are_distinct(monkeypatch):
     assert slots[0].end==slots[1].start
     assert instant(datetime(2026,10,25,2,30,fold=1)) > slots[0].end
     assert local_time(slots[1].start).hour==2
+
+
+def test_local_price_release_and_consumption_cross_midnight(monkeypatch):
+    from custom_components.omnibattery.control.charge_delay import ChargeDelayManager
+    from custom_components.omnibattery.pricing.discharge_reserve import consumption_by_slot
+    monkeypatch.setattr(dt_util, 'DEFAULT_TIME_ZONE', ZoneInfo('Europe/Madrid'))
+    start = datetime(2026, 7, 5, 22, tzinfo=timezone.utc)  # Monday 00:00 local
+    slot = PriceSlot(start, start + timedelta(hours=1), .1)
+    ctrl = SimpleNamespace(price_sensor='sensor.price', predictive_charging_enabled=True,
+        predictive_charging_mode='dynamic_pricing',
+        _pricing_mgr=SimpleNamespace(get_future_price_slots=lambda: [slot]))
+    manager = object.__new__(ChargeDelayManager)
+    manager._controller = ctrl
+    assert manager._price_optimal_release_h(0, 2) == 0
+    assert manager._window_avg_price(0, 1, [slot]) == pytest.approx(.1)
+    assert consumption_by_slot([slot], {local_time(start).date(): [1]*96})[slot] == 4
+    window = dict(enabled=True, days=['mon'], start_time='00:00', end_time='01:00')
+    assert PricingManager._future_slot_matches_operation_block(slot, window)
+    assert not PricingManager._future_slot_matches_operation_block(slot, {**window, 'days':['sun']})
+
+
+def test_consumption_repeated_hour_uses_local_bins_twice(monkeypatch):
+    from custom_components.omnibattery.pricing.discharge_reserve import consumption_by_slot
+    monkeypatch.setattr(dt_util, 'DEFAULT_TIME_ZONE', ZoneInfo('Europe/Madrid'))
+    start = datetime(2026, 10, 25, 0, tzinfo=timezone.utc)
+    slot = PriceSlot(start, start + timedelta(hours=2), .1)
+    profile = [0]*96
+    profile[8:12] = [1]*4
+    assert consumption_by_slot([slot], {}, profile)[slot] == 8

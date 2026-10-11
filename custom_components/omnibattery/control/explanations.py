@@ -36,11 +36,20 @@ def battery_explanations(controller):
                     stamp = details.get(key)
                     if stamp is not None:
                         releases.append(stamp.isoformat() if hasattr(stamp, "isoformat") else str(stamp))
+        if "charge_delay" in getattr(controller, "get_charge_blockers", lambda _: {})(battery):
+            unlock = getattr(controller, "_charge_delay_status", {}).get("estimated_unlock_time")
+            if unlock:
+                releases.append(str(unlock))
+        cooldowns = getattr(controller, "_backup_cooldown_until", {})
+        # Identity lookup also supports unhashable lightweight coordinator doubles.
+        cooldown = next((stamp for item, stamp in cooldowns.items() if item is battery), None)
+        if cooldown is not None:
+            releases.append(cooldown.isoformat())
         charge = _number(getattr(battery, "commanded_charge_power", None))
         discharge = _number(getattr(battery, "commanded_discharge_power", None))
         result[str(battery.device_key)] = {
-            "owner": owner,
-            "commanded_power_w": charge - discharge if charge is not None and discharge is not None else None,
+            "owner": owner if battery.is_available else "unknown",
+            "commanded_power_w": charge - discharge if battery.is_available and charge is not None and discharge is not None else None,
             "charge_ceiling_w": _number(getattr(battery, "effective_max_charge_power", None)),
             "discharge_ceiling_w": _number(getattr(battery, "effective_max_discharge_power", None)),
             "blockers": blocks,

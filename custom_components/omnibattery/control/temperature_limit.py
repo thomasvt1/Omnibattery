@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -64,16 +65,30 @@ class TemperatureChargeLimitManager:
         attr = "min_charge_power_w" if is_charging else "min_discharge_power_w"
         return int(getattr(caps, attr, 0) or 0)
 
+    @staticmethod
+    def _temperature(coordinator):
+        """Return the reading and its real age; cached poll values are not new data."""
+        try:
+            value = float((coordinator.data or {}).get("internal_temperature"))
+        except (TypeError, ValueError):
+            return None, 0.0
+        if not math.isfinite(value):
+            return None, 0.0
+        times = getattr(coordinator, "_key_update_times", None)
+        if times is None:  # Lightweight consumers without per-key freshness.
+            return value, 0.0
+        stamp = times.get("internal_temperature")
+        if not isinstance(stamp, datetime) or stamp.tzinfo is None:
+            return None, 0.0
+        age = max(0.0, (datetime.now(timezone.utc) - stamp).total_seconds())
+        return (value if age <= 60.0 else None), age
+
     def _apply(self, coordinator, limit: int, is_charging: bool) -> int:
         """Cap ``limit`` by the thermal derate factor (fail-safe passthrough)."""
-        temp = (coordinator.data or {}).get("internal_temperature")
+        temp_f, age = self._temperature(coordinator)
         key = (id(coordinator), is_charging)
         now = time.monotonic()
-        try:
-            temp_f = float(temp)
-        except (TypeError, ValueError):
-            temp_f = math.nan
-        if not math.isfinite(temp_f):
+        if temp_f is None:
             previous = self._last_limits.get(key)
             if previous is not None and now - previous[0] <= THERMAL_HOLD_SECONDS:
                 return min(limit, previous[1])
@@ -82,14 +97,14 @@ class TemperatureChargeLimitManager:
 
         factor = self._derate_factor(temp_f)
         if factor >= 1.0:
-            self._last_limits[key] = (now, limit)
+            self._last_limits.pop(key, None)
             return limit
         derated = min(limit, int(round(limit * factor)))
         # Hard floor: never command a non-zero power below the battery's minimum
         # reliable operating power (0 when the driver declares none). Never raise
         # above a limit that was already below that floor.
         result = max(derated, min(self._min_power(coordinator, is_charging), limit))
-        self._last_limits[key] = (now, result)
+        self._last_limits[key] = (now - age, result)
         return result
 
     def apply_temperature_limit(self, coordinator, limit: int) -> int:
@@ -114,14 +129,7 @@ class TemperatureChargeLimitManager:
         c = self._controller
         status: dict = {}
         for coordinator in c.coordinators:
-            data = coordinator.data or {}
-            temp = data.get("internal_temperature")
-            try:
-                temp_f = float(temp) if temp is not None else None
-            except (TypeError, ValueError):
-                temp_f = None
-            if temp_f is not None and not math.isfinite(temp_f):
-                temp_f = None
+            temp_f, _ = self._temperature(coordinator)
             previous = self._last_limits.get((id(coordinator), True))
             held = previous is not None and time.monotonic() - previous[0] <= THERMAL_HOLD_SECONDS
             factor = self._derate_factor(temp_f) if temp_f is not None else None
