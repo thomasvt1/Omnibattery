@@ -29,3 +29,14 @@ test('duplicate pending command is suppressed and success means accepted',async(
  finish(); assert.equal(await first,true); assert.equal(calls,1);
  assert.equal(p.feedback.kind,'accepted'); assert.equal(c.disabled,false);
 });
+test('another successful command cannot erase a failure',async()=>{
+ let finish;
+ const p=panel((d,s,data)=>data.entity_id==='number.test' ? Promise.reject(Error('Denied')) : new Promise(r=>{finish=r;}));
+ const second=p._sendCommand('number','set_value',{entity_id:'number.second'},control());
+ await p._sendCommand('number','set_value',{entity_id:'number.test'},control());
+ finish(); await second;
+ assert.equal(p.feedback.kind,'failed'); assert.match(p.feedback.text,/Denied/);
+ p._hass.callService=async()=>{};
+ await p._sendCommand('number','set_value',{entity_id:'number.test'},control());
+ assert.equal(p.feedback.kind,'accepted');
+});

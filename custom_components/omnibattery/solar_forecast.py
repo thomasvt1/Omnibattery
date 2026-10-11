@@ -293,6 +293,9 @@ def forecast_freshness(state: Any, now: datetime, timezone: Any) -> tuple[str, d
     report = getattr(state, "last_reported", None) or getattr(state, "last_updated", None)
     report = _parse_period_timestamp(report)
     issued = _parse_period_timestamp(attributes.get("forecast_generated_at", attributes.get("generated_at")))
+    if any(key in attributes and _parse_period_timestamp(attributes[key]) is None
+           for key in ("forecast_generated_at", "generated_at")):
+        return "invalid_timestamp", report
     valid_date = attributes.get("forecast_date")
     if valid_date is not None:
         try:
@@ -319,6 +322,7 @@ def read_solar_forecast_kwh(
     *,
     update_controller: bool = True,
     now: datetime | None = None,
+    rejection: list[str] | None = None,
 ) -> SolarForecast | None:
     """Read the preferred forecast: remaining first, legacy today second.
 
@@ -337,17 +341,16 @@ def read_solar_forecast_kwh(
     zone = solar_forecast_local_timezone(hass, controller, current)
     if current.tzinfo is None:
         current = current.replace(tzinfo=zone)
-    if update_controller:
-        controller.solar_forecast_freshness = "unavailable"
+    failure = "unavailable"
     for source, sensor in candidates:
         if not sensor:
             continue
         state = hass.states.get(sensor)
         value = _state_kwh(state)
         freshness, reported_at = forecast_freshness(state, current, zone)
-        if update_controller:
-            controller.solar_forecast_freshness = freshness
         if freshness not in ("fresh", "unknown"):
+            if failure == "unavailable":
+                failure = freshness
             continue
         if value is not None:
             forecast = SolarForecast(
@@ -363,11 +366,15 @@ def read_solar_forecast_kwh(
             # projections use the same adapter read-only, so they can refresh
             # the live value without changing controller-owned runtime state.
             if update_controller:
+                controller.solar_forecast_freshness = freshness
                 controller.solar_forecast_source = source
                 controller.solar_forecast_diagnostic_source = forecast.diagnostic_source
                 controller.solar_forecast_periods = forecast.periods
             return forecast
+    if rejection is not None:
+        rejection.append(failure)
     if update_controller:
+        controller.solar_forecast_freshness = failure
         controller.solar_forecast_source = None
         controller.solar_forecast_diagnostic_source = None
         controller.solar_forecast_periods = ()
@@ -527,11 +534,13 @@ def read_remaining_solar_kwh(
     the conversion is carried on the result so downstream code cannot infer
     the horizon a second time.
     """
+    rejection: list[str] = []
     forecast = read_solar_forecast_kwh(
         hass,
         controller,
         update_controller=update_controller,
         now=now if isinstance(now, datetime) else None,
+        rejection=rejection,
     )
     if forecast is None:
         if update_controller:
@@ -543,8 +552,8 @@ def read_remaining_solar_kwh(
             periods=None,
             original_source=None,
             conversion="unsafe_zero",
-            freshness=getattr(controller, "solar_forecast_freshness", "unavailable"),
-            fallback_reason=getattr(controller, "solar_forecast_freshness", "unavailable"),
+            freshness=rejection[0] if rejection else "unavailable",
+            fallback_reason=rejection[0] if rejection else "unavailable",
         )
 
     # Some providers roll the scalar ``remaining today`` state a few minutes
@@ -569,6 +578,7 @@ def read_remaining_solar_kwh(
                 "remaining" if forecast.source == "remaining" else "today_legacy"
             ),
             conversion="dated_periods_zero_scalar",
+            freshness=forecast.freshness,
         )
 
     if forecast.source == "remaining":
@@ -624,4 +634,5 @@ def read_remaining_solar_kwh(
         periods=forecast.periods or None,
         original_source="today_legacy",
         conversion=conversion,
+        freshness=forecast.freshness,
     )

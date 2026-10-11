@@ -31,3 +31,27 @@ def test_recent_report_of_unchanged_value_is_fresh():
 def test_provider_validity_wins_over_recent_ha_report(attributes,expected):
     state=SimpleNamespace(attributes=attributes,last_reported=NOW)
     assert forecast_freshness(state,NOW,ZoneInfo('UTC'))[0]==expected
+
+
+@pytest.mark.parametrize('issued', ['garbage', '2026-10-11T12:00:00', None])
+def test_invalid_explicit_issuance_is_rejected(issued):
+    state=SimpleNamespace(attributes={'generated_at':issued},last_reported=NOW)
+    assert forecast_freshness(state,NOW,ZoneInfo('UTC'))[0]=='invalid_timestamp'
+
+
+@pytest.mark.parametrize('fallback', [None, SimpleNamespace(state='unknown',attributes={},last_reported=NOW)])
+def test_readonly_rejection_survives_unusable_legacy_fallback(fallback):
+    stale=SimpleNamespace(state='12',attributes={},last_reported=NOW-timedelta(days=1))
+    states={'sensor.remaining':stale,'sensor.today':fallback}
+    hass=SimpleNamespace(states=SimpleNamespace(get=states.get),config=SimpleNamespace(time_zone='UTC'))
+    ctrl=SimpleNamespace(solar_forecast_remaining_sensor='sensor.remaining',solar_forecast_sensor='sensor.today',
+                         solar_forecast_freshness='fresh')
+    result=read_remaining_solar_kwh(hass,ctrl,now=NOW,update_controller=False)
+    assert result.fallback_reason=='stale'
+    assert ctrl.solar_forecast_freshness=='fresh'
+    from custom_components.omnibattery.pricing.engine import PricingManager
+    mgr=PricingManager(hass,ctrl)
+    mgr._read_remaining_solar_input=lambda **kwargs:result
+    ctrl._dp_last_eval_solar_remaining_kwh=12
+    assert mgr._read_remaining_solar_reading(NOW)==0
+    assert mgr._is_solar_forecast_reeval(NOW)
