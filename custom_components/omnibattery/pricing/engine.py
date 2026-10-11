@@ -4168,8 +4168,19 @@ class PricingManager:
         """
         controller = self._controller
         tracker = getattr(controller, "_non_responsive", None)
+        def charge_enabled(battery):
+            if not getattr(battery, "allow_charge", True):
+                return False
+            limit = getattr(battery, "effective_max_charge_power", None)
+            if limit is None:
+                limit = getattr(battery, "max_charge_power", math.inf)
+            try:
+                return float(limit) > 0
+            except (TypeError, ValueError):
+                return False
+
         candidates = [battery for battery in fallback
-            if getattr(battery, "is_available", True)
+            if charge_enabled(battery) and getattr(battery, "is_available", True)
             and not getattr(battery, "battery_manual_mode_enabled", False)
             and not getattr(battery, "rs485_user_disabled", False)
             and not getattr(controller, "_is_backup_function_active", lambda _: False)(battery)

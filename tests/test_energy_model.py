@@ -79,3 +79,14 @@ def test_owned_battery_does_not_reduce_healthy_model(attribute):
     setattr(excluded,attribute,True)
     manager=PricingManager(None,SimpleNamespace())
     assert manager._charge_efficiency_bound([healthy,excluded])==.95
+
+
+@pytest.mark.parametrize('attribute,value', [('allow_charge',False),('effective_max_charge_power',0),
+    ('max_charge_power',0),('effective_max_charge_power',float('nan'))])
+def test_permanently_charge_disabled_battery_is_excluded(attribute,value):
+    from custom_components.omnibattery.pricing.engine import PricingManager
+    healthy=battery(BatteryEnergyModel(.95,.9))
+    disabled=battery(BatteryEnergyModel(.6,.8))
+    setattr(disabled,attribute,value)
+    manager=PricingManager(None,SimpleNamespace())
+    assert manager._charge_efficiency_bound([healthy,disabled])==.95
