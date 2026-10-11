@@ -844,3 +844,19 @@ def test_venus_a_d_at_one_hundred_percent_is_left_to_the_handler(clock):
 
     assert ctrl._current_price_slot_active is True
     assert manager.notifications == [slot.start]
+
+
+def test_shortfall_uses_modeled_efficiency_and_remaining_slot_time(clock):
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
+    battery=_Battery(20)
+    battery.capabilities=SimpleNamespace(energy_model=BatteryEnergyModel(.6,.9))
+    a,b=_slots(_at(9,30),[.3,.29])
+    schedule=_schedule({a:SLOT_PURPOSE_DEFICIT,b:SLOT_PURPOSE_DEFICIT},
+        slot_energy_targets_kwh={a:1,b:0},chronological_planning_active=True)
+    ctrl=_controller(battery,_decision(2),schedule)
+    ctrl._predictive_deficit_target_soc={battery:40}  # 2 kWh undelivered
+    manager=_manager(ctrl,_balance(battery,4))
+    clock.value=b.start+timedelta(minutes=5)  # Only ten minutes remain.
+    manager._carry_over_slot_shortfall(a,incoming=b)
+    assert schedule.slot_energy_targets_kwh[b]==pytest.approx(1)  # 10 kW * 1/6 h * 60%
+    assert schedule.deadline_shortfall_kwh==pytest.approx(1)

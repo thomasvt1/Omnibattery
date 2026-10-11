@@ -1947,7 +1947,7 @@ class ChargeDischargeController:
 
     def _daily_operation_build_projection(self, now: datetime) -> dict[str, Any] | None:
         """Build the dashboard projection from the existing authoritative planner."""
-        from .const import CHARGE_EFFICIENCY
+        from .energy_model import future_charge_efficiency
         from .pricing import PriceSlot
         from .pricing.chronological import SlotAllocation
         from .tracking.daily_projection import (
@@ -2094,7 +2094,7 @@ class ChargeDischargeController:
                         )
                         / 1000.0
                         * duration_h
-                        * CHARGE_EFFICIENCY
+                        * future_charge_efficiency(self)
                     )
                 if target > 0.0:
                     allocations.append(

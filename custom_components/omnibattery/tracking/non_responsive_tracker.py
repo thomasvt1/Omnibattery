@@ -62,6 +62,14 @@ class NonResponsiveTracker:
             return default
         return info.get("reason") or default
 
+    def peek_excluded(self, coordinator) -> bool:
+        """Read exclusion by identity without advancing cooldown/retry state."""
+        info = self.batteries.get(coordinator)
+        if not info or info.get("excluded_at") is None:
+            return False
+        elapsed_min = (dt_util.utcnow() - info["excluded_at"]).total_seconds() / 60
+        return elapsed_min < self._cooldown_min
+
     def is_excluded(self, coordinator) -> bool:
         """Return True if the battery is currently in non-responsive cooldown.
 

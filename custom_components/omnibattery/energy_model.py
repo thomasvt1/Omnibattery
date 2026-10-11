@@ -74,3 +74,37 @@ def battery_energy_model(coordinator, now=None):
 def fleet_charge_efficiency(coordinators):
     """Conservative bound while dispatch may choose any eligible battery."""
     return min((battery_energy_model(c).charge_efficiency for c in coordinators), default=0.85)
+
+
+def future_charge_efficiency(controller, batteries=None):
+    """Read-only bound for reachable and automatically owned future chargers.
+
+    Temporary operating pauses and SOC targets do not erase known models.
+    """
+    fallback = list(batteries if batteries is not None else getattr(controller, "coordinators", ()))
+    tracker = getattr(controller, "_non_responsive", None)
+    excluded = set(tracker.excluded_names()) if tracker is not None and callable(getattr(tracker, "excluded_names", None)) else set()
+    peek_excluded = getattr(tracker, "peek_excluded", None)
+
+    def charge_enabled(battery):
+        if not getattr(battery, "allow_charge", True):
+            return False
+        limit = getattr(battery, "effective_max_charge_power", None)
+        if limit is None:
+            limit = getattr(battery, "max_charge_power", math.inf)
+        try:
+            return float(limit) > 0
+        except (TypeError, ValueError):
+            return False
+
+    candidates = [battery for battery in fallback
+        if charge_enabled(battery) and getattr(battery, "is_available", True)
+        and not getattr(battery, "battery_manual_mode_enabled", False)
+        and not getattr(battery, "rs485_user_disabled", False)
+        and not getattr(controller, "_is_backup_function_active", lambda _: False)(battery)
+        and not getattr(controller, "_is_manual_slot_owned", lambda _: False)(battery)
+        and not (peek_excluded(battery) if callable(peek_excluded)
+                 else getattr(battery, "name", None) in excluded)]
+    # When no device is reachable, never replace a known lower efficiency
+    # with a more optimistic legacy assumption while capacity is projected.
+    return fleet_charge_efficiency(candidates or fallback)

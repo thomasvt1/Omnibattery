@@ -90,3 +90,40 @@ def test_permanently_charge_disabled_battery_is_excluded(attribute,value):
     setattr(disabled,attribute,value)
     manager=PricingManager(None,SimpleNamespace())
     assert manager._charge_efficiency_bound([healthy,disabled])==.95
+
+
+def test_legacy_duration_and_charge_delay_use_directional_efficiency():
+    from custom_components.omnibattery.pricing.calculations import calculate_exact_charging_hours_needed
+    from custom_components.omnibattery.control.charge_delay import _charge_time_h
+    assert calculate_exact_charging_hours_needed(6,1000,1000,charge_efficiency=.6)==10
+    c=battery(BatteryEnergyModel(.6,.9))
+    c.data={'battery_soc':40,'battery_total_energy':10}
+    ctrl=SimpleNamespace(_battery_power_limit=lambda *_:1000)
+    assert _charge_time_h(ctrl,[c],100,6,1)==10
+
+
+def test_future_model_read_does_not_mutate_nonresponsive_cooldowns():
+    from custom_components.omnibattery.energy_model import future_charge_efficiency
+    healthy=battery(BatteryEnergyModel(.95,.9));healthy.name='healthy'
+    excluded=battery(BatteryEnergyModel(.6,.8));excluded.name='offline'
+    def mutating_query(_):
+        raise AssertionError('read-only model lookup must not reset cooldowns')
+    ctrl=SimpleNamespace(coordinators=[healthy,excluded],
+        _non_responsive=SimpleNamespace(excluded_names=lambda:['offline'],is_excluded=mutating_query))
+    assert future_charge_efficiency(ctrl)==.95
+
+
+def test_future_model_uses_identity_and_does_not_reset_expired_exclusions():
+    from homeassistant.util import dt as dt_util
+    from custom_components.omnibattery.energy_model import future_charge_efficiency
+    from custom_components.omnibattery.tracking.non_responsive_tracker import NonResponsiveTracker
+    healthy=battery(BatteryEnergyModel(.95,.9));healthy.name='same name'
+    excluded=battery(BatteryEnergyModel(.6,.8));excluded.name='same name'
+    tracker=NonResponsiveTracker()
+    tracker.batteries[excluded]={'excluded_at':dt_util.utcnow(),'fail_count':3,'wake_used':True}
+    ctrl=SimpleNamespace(coordinators=[healthy,excluded],_non_responsive=tracker)
+    assert future_charge_efficiency(ctrl)==.95
+    tracker.batteries[excluded]['excluded_at']-=timedelta(minutes=6)
+    before=dict(tracker.batteries[excluded])
+    assert future_charge_efficiency(ctrl)==.6
+    assert tracker.batteries[excluded]==before

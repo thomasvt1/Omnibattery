@@ -58,7 +58,6 @@ from ..const import (
     SOLAR_FORECAST_DAILY_RETRY_LIMIT,
     T_START_FALLBACK_HOUR,
     FLOOR_HYSTERESIS_PCT,
-    CHARGE_EFFICIENCY,
     normalize_solar_profile_mode,
 )
 from ..solar_forecast import (
@@ -109,7 +108,7 @@ from .nordpool import (
     OfficialNordPoolSource,
     resolve_official_nordpool_source,
 )
-from ..energy_model import fleet_charge_efficiency
+from ..energy_model import future_charge_efficiency
 from .time_math import instant, elapsed, time_min, time_max, local_time
 
 if TYPE_CHECKING:
@@ -3435,12 +3434,16 @@ class PricingManager:
                 planned_charge_kwh,
                 self._contracted_charge_ceiling(),
                 self._controller.max_charge_capacity,
+                charge_efficiency=self._charge_efficiency_bound(),
             )
         else:
             # No deficit — use daily consumption as reference so the number of
             # selected hours is meaningful (same basis the algorithm uses to decide)
             deficit_hours_needed = calculations.calculate_charging_hours_needed(
-                decision_data["avg_consumption_kwh"], self._contracted_charge_ceiling(), self._controller.max_charge_capacity
+                decision_data['avg_consumption_kwh'],
+                self._contracted_charge_ceiling(),
+                self._controller.max_charge_capacity,
+                charge_efficiency=self._charge_efficiency_bound(),
             )
         # One instant, one computation. `ceiling` is what actually filters;
         # `arb_ceiling` is kept only so the notification can name the cause.
@@ -3466,6 +3469,7 @@ class PricingManager:
             negative_price_energy_kwh,
             self._contracted_charge_ceiling(),
             self._controller.max_charge_capacity,
+            charge_efficiency=self._charge_efficiency_bound(),
         )
         negative_price_selected = calculations.select_cheapest_slots_by_duration(
             [slot for slot in slots if math.isfinite(slot.price) and slot.price < 0.0],
@@ -3508,6 +3512,7 @@ class PricingManager:
                     chronological_plan.total_required_kwh,
                     self._contracted_charge_ceiling(),
                     self._controller.max_charge_capacity,
+                    charge_efficiency=self._charge_efficiency_bound(),
                 )
         else:
             # A sufficient balance still deserves a forecast/timeline
@@ -3547,6 +3552,7 @@ class PricingManager:
                 weekly_reserve_kwh,
                 self._contracted_charge_ceiling(),
                 self._controller.max_charge_capacity,
+                charge_efficiency=self._charge_efficiency_bound(),
             )
             # ponytail: the price ceiling was computed from the pre-reservation
             # deficit_hours_needed and is deliberately not recomputed here.
@@ -4159,36 +4165,8 @@ class PricingManager:
             return False
         return True
 
-    def _charge_efficiency_bound(self, fallback):
-        """Bound future charging by reachable, automatically owned batteries.
-
-        Current operation blocks, SOC hysteresis and predictive targets can
-        expire before a future tariff slot. They must not discard a known
-        converter model. Ownership/connectivity exclusions remain effective.
-        """
-        controller = self._controller
-        tracker = getattr(controller, "_non_responsive", None)
-        def charge_enabled(battery):
-            if not getattr(battery, "allow_charge", True):
-                return False
-            limit = getattr(battery, "effective_max_charge_power", None)
-            if limit is None:
-                limit = getattr(battery, "max_charge_power", math.inf)
-            try:
-                return float(limit) > 0
-            except (TypeError, ValueError):
-                return False
-
-        candidates = [battery for battery in fallback
-            if charge_enabled(battery) and getattr(battery, "is_available", True)
-            and not getattr(battery, "battery_manual_mode_enabled", False)
-            and not getattr(battery, "rs485_user_disabled", False)
-            and not getattr(controller, "_is_backup_function_active", lambda _: False)(battery)
-            and not getattr(controller, "_is_manual_slot_owned", lambda _: False)(battery)
-            and not (tracker is not None and tracker.is_excluded(battery))]
-        # When no device is reachable, never replace a known lower efficiency
-        # with a more optimistic legacy assumption while capacity is projected.
-        return fleet_charge_efficiency(candidates or fallback)
+    def _charge_efficiency_bound(self, fallback=None):
+        return future_charge_efficiency(self._controller, fallback)
 
     def _read_remaining_solar_reading(self, now: datetime) -> float | None:
         """Remaining-solar reading, or None when the sensor said nothing usable.
@@ -5002,6 +4980,7 @@ class PricingManager:
             planned_evening_charge_kwh,
             self._contracted_charge_ceiling(),
             self._controller.max_charge_capacity,
+            charge_efficiency=self._charge_efficiency_bound(),
         )
         decision_data["should_charge"] = True
         decision_data["energy_deficit_kwh"] = evening_deficit_kwh
@@ -5342,17 +5321,19 @@ class PricingManager:
                     self._contracted_charge_ceiling(),
                     max(0.0, float(controller.max_charge_capacity)),
                 ) / 1000.0
-                for slot in sorted(schedule.selected_slots, key=lambda item: item.start):
+                carry_now = datetime.now()
+                efficiency = self._charge_efficiency_bound()
+                for slot in sorted(schedule.selected_slots, key=lambda item: instant(item.start)):
                     if (
                         (
-                            instant(slot.start) < instant(datetime.now())
+                            instant(slot.start) < instant(carry_now)
                             and (incoming is None or instant(slot.start) != instant(incoming.start))
                         )
                         or slot == active_slot
                         or (deadline is not None and instant(slot.end) > instant(deadline))
                     ):
                         continue
-                    capacity = power_kw * max(0.0, (elapsed(slot.end, slot.start)).total_seconds() / 3600.0) * CHARGE_EFFICIENCY
+                    capacity = power_kw * max(0.0, elapsed(slot.end, time_max(slot.start, carry_now)).total_seconds() / 3600.0) * efficiency
                     current = float(schedule.slot_energy_targets_kwh.get(slot, 0.0) or 0.0)
                     take = min(remaining, max(0.0, capacity - current))
                     if take <= 0:

@@ -27,7 +27,6 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from ..const import (
-    CHARGE_EFFICIENCY,
     DELAY_SAFETY_FACTOR,
     DELAY_SOC_SETPOINT_HYSTERESIS,
     DOMAIN,
@@ -39,6 +38,7 @@ from ..solar_forecast import (
     get_configured_solar_forecast_sensor,
     read_remaining_solar_kwh,
 )
+from ..energy_model import battery_energy_model, fleet_charge_efficiency
 from ..pricing.time_math import elapsed, local_time, instant
 
 # Price-aware release only makes sense when charging is actually scheduled by
@@ -159,10 +159,10 @@ def _charge_time_h(
             continue
         slowest = max(
             slowest,
-            deficit / (limit_w / 1000.0 * CHARGE_EFFICIENCY),
+            deficit / (limit_w / 1000.0 * battery_energy_model(coordinator).charge_efficiency),
         )
 
-    return max(slowest, energy_needed_kwh / (system_kw * CHARGE_EFFICIENCY))
+    return max(slowest, energy_needed_kwh / (system_kw * fleet_charge_efficiency(batteries)))
 
 
 class ChargeDelayManager:

@@ -464,17 +464,19 @@ def parse_tibber_prices(prices_by_home: dict) -> list:
     return slots
 
 
-def calculate_charging_hours_needed(deficit_kwh: float, max_contracted_power: float, max_charge_capacity: float) -> float:
+def calculate_charging_hours_needed(deficit_kwh: float, max_contracted_power: float, max_charge_capacity: float, *, charge_efficiency: float = CHARGE_EFFICIENCY) -> float:
     """Calculate how many hours of charging are needed to cover deficit.
 
     Uses the effective charge power: min(ICP limit, total battery charge capacity).
     If ICP > battery capacity, the batteries are the bottleneck and using ICP alone
     would underestimate the number of hours needed.
     """
+    if not math.isfinite(charge_efficiency) or not 0 < charge_efficiency <= 1:
+        raise ValueError("invalid charge efficiency")
     effective_power_kw = min(max_contracted_power, max_charge_capacity) / 1000.0
     if effective_power_kw <= 0:
         return 1.0  # Fallback: at least 1 hour if no power info available
-    hours = deficit_kwh / (effective_power_kw * CHARGE_EFFICIENCY)
+    hours = deficit_kwh / (effective_power_kw * charge_efficiency)
     return math.ceil(hours * 2) / 2  # Round up to nearest 0.5h
 
 
@@ -482,6 +484,7 @@ def calculate_exact_charging_hours_needed(
     energy_kwh: float,
     max_contracted_power: float,
     max_charge_capacity: float,
+    *, charge_efficiency: float = CHARGE_EFFICIENCY,
 ) -> float:
     """Return unrounded charging time for an explicit battery-energy target.
 
@@ -489,10 +492,12 @@ def calculate_exact_charging_hours_needed(
     to a half-hour would select unnecessary intervals.  Runtime SOC enforcement
     remains authoritative when the final physical slot is longer than needed.
     """
+    if not math.isfinite(charge_efficiency) or not 0 < charge_efficiency <= 1:
+        raise ValueError("invalid charge efficiency")
     effective_power_kw = min(max_contracted_power, max_charge_capacity) / 1000.0
     if energy_kwh <= 0 or effective_power_kw <= 0:
         return 0.0
-    return energy_kwh / (effective_power_kw * CHARGE_EFFICIENCY)
+    return energy_kwh / (effective_power_kw * charge_efficiency)
 
 
 def calculate_planned_grid_charge_kwh(
