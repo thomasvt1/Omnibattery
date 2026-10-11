@@ -41,6 +41,7 @@ from .consumption_profile import (
     MAX_SAMPLE_GAP_SECONDS,
 )
 from .solar_profile import SolarProfileTracker
+from .forecast_calibration import ForecastCalibration
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -146,6 +147,7 @@ class ConsumptionTracker:
         self._hass = hass
         self._controller = controller
         self._config_entry = config_entry
+        self.forecast_calibration = ForecastCalibration()
         # All Recorder consumers for this entry share one queue.  The control
         # loop never awaits this coordinator; it only owns best-effort learning
         # work and its cancellation token.
@@ -659,6 +661,7 @@ class ConsumptionTracker:
         """Persist the solar start marker without leaking Store exceptions."""
         try:
             await self._solar_t_start_store.async_save({
+                "forecast_calibration": self.forecast_calibration.dump() if hasattr(self, "forecast_calibration") else {},
                 "date": date.today().isoformat(),
                 "t_start": self._controller._solar_t_start,
             })
@@ -806,6 +809,8 @@ class ConsumptionTracker:
         ctrl = self._controller
         try:
             data = await self._daily_energy_store.async_load()
+            if isinstance(data, dict) and hasattr(self, "forecast_calibration"):
+                self.forecast_calibration.restore(data.get("forecast_calibration"))
             if not data or data.get("date") != date.today().isoformat():
                 return
             today = date.today()
@@ -1031,6 +1036,44 @@ class ConsumptionTracker:
             "explicit_curtailment": explicit,
         }
 
+    def _calibration_solar_power_kw(self, now: datetime) -> float | None:
+        """Require every configured production source to be fresh and complete."""
+        def fresh(stamp):
+            return (isinstance(stamp, datetime) and stamp.tzinfo is not None
+                    and 0 <= now.timestamp() - stamp.timestamp() <= 120)
+
+        ctrl = self._controller
+        total = 0.0
+        sources = 0
+        sensor = getattr(ctrl, "solar_production_sensor", None)
+        if sensor:
+            state = self._hass.states.get(sensor)
+            stamp = getattr(state, "last_reported", None) or getattr(state, "last_updated", None)
+            power = self._read_power_kw(sensor)
+            if not fresh(stamp) or power is None or not math.isfinite(power) or power < 0:
+                return None
+            total += power
+            sources += 1
+        for coord in getattr(ctrl, "coordinators", ()):
+            mppt = has_connected_mppt_pv(coord)
+            if not (mppt or getattr(getattr(coord, "capabilities", None), "has_solar_telemetry", False)):
+                continue
+            if not getattr(coord, "is_available", False):
+                return None
+            keys = ("mppt1_power", "mppt2_power", "mppt3_power", "mppt4_power") if mppt else ("solar_power",)
+            data = getattr(coord, "data", {}) or {}
+            stamps = getattr(coord, "_key_update_times", {}) or {}
+            for key in keys:
+                try:
+                    value = float(data[key])
+                except (KeyError, TypeError, ValueError):
+                    return None
+                if not math.isfinite(value) or value < 0 or not fresh(stamps.get(key)):
+                    return None
+                total += value / 1000
+            sources += 1
+        return total if sources else None
+
     async def accumulate_daily_solar_energy(self) -> None:
         """Integrate total solar production power → exact daily kWh.
 
@@ -1038,6 +1081,13 @@ class ConsumptionTracker:
         Trapezoidal rule: averages the previous and current sample so a ramping
         production curve is not systematically miscounted (left-Riemann bias).
         """
+        if hasattr(self, "forecast_calibration"):
+            moment = dt_util.utcnow()
+            context = self._solar_runtime_context(None)
+            censored = context['explicit_curtailment'] or (
+                context['battery_full_risk'] and context['export_zero'])
+            self.forecast_calibration.observe(moment, self._calibration_solar_power_kw(moment),
+                                              censored=censored)
         power_kw = self._read_total_solar_power_kw()
         if power_kw is None:
             self._daily_solar_last_time = None

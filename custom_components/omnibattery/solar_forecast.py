@@ -7,7 +7,7 @@ one place prevents callers from accidentally subtracting production twice.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time, timedelta, timezone
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
@@ -94,6 +94,9 @@ class SolarForecastInput:
     horizon: str = "remaining"
     freshness: str = "unknown"
     fallback_reason: str | None = None
+    raw_remaining_kwh: float | None = None
+    uncertainty_kwh: float = 0.0
+    calibration_samples: int = 0
 
     def __post_init__(self) -> None:
         """Keep the normalized contract finite even with a loose sensor value."""
@@ -520,7 +523,7 @@ def _current_hour(controller: Any, now: datetime | float | None) -> float:
     return datetime.now().hour + datetime.now().minute / 60.0
 
 
-def read_remaining_solar_kwh(
+def _read_remaining_solar_kwh(
     hass: Any,
     controller: Any,
     *,
@@ -636,3 +639,38 @@ def read_remaining_solar_kwh(
         conversion=conversion,
         freshness=forecast.freshness,
     )
+
+
+def read_remaining_solar_kwh(hass: Any, controller: Any, *,
+                             now: datetime | float | None = None,
+                             update_controller: bool = True) -> SolarForecastInput:
+    """Normalize once, then apply a bounded reserve learned only from past outcomes."""
+    result = _read_remaining_solar_kwh(hass, controller, now=now,
+                                      update_controller=update_controller)
+    journal = getattr(getattr(controller, "_consumption_tracker", None), "forecast_calibration", None)
+    # Legacy hour-only projections cannot identify an issuance date safely.
+    if journal is None or isinstance(now, (float, int)) or result.source == "fallback":
+        return result
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        return result
+    current = current.astimezone(solar_forecast_local_timezone(hass, controller, current))
+    sensor = get_configured_solar_forecast_sensor(
+        controller, "remaining" if result.original_source == "remaining" else "today")
+    source = f"{sensor}:{result.source}:{result.conversion}"
+    raw = result.remaining_kwh
+    if update_controller and result.freshness == "fresh":
+        if journal.issue(source, current, raw):
+            save = getattr(controller._consumption_tracker, "save_daily_energy", None)
+            if callable(save):
+                save()
+    stats = journal.stats(source, current)
+    reserve = raw * stats['reserve_fraction']
+    if update_controller:
+        controller.solar_forecast_calibration = {**stats, "raw_remaining_kwh": raw,
+                                                "uncertainty_kwh": reserve}
+    factor = (raw - reserve) / raw if raw else 1.0
+    return replace(result, remaining_kwh=raw - reserve, raw_remaining_kwh=raw,
+                   uncertainty_kwh=reserve, calibration_samples=stats['samples'],
+                   periods=tuple(replace(p, energy_kwh=p.energy_kwh * factor)
+                                 for p in result.periods) if result.periods else None)

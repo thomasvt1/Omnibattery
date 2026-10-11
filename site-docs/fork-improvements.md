@@ -83,3 +83,26 @@ slot quotas remain AC output while SOC targets describe stored depletion.
 For mixed fleets, headroom planning uses the highest participating discharge
 efficiency: this is the conservative bound on stored depletion for a given AC
 output, whereas demand reserves use the lowest efficiency.
+
+## Forecast calibration
+
+The first fresh remaining forecast in each source/local-day/six-hour issuance
+bucket is recorded before any reserve is applied. Its horizon ends at the next
+local midnight (including 23/25-hour DST days). Later forecast revisions cannot
+replace that snapshot. Source identity includes the sensor and conversion path.
+
+Production is integrated over that exact horizon, with at most 120 seconds
+between fresh samples and complete coverage required. Missing channels, stale
+telemetry, restarts with coverage gaps, and known or suspected curtailment leave
+an outcome unscored. They never become zero-production observations. Independent
+battery PV requires all four MPPT channels, or a fresh independent aggregate PV
+reading; installations without that evidence remain uncalibrated.
+
+At least ten independent scored days in the matching issuance bucket are needed
+before planning subtracts the 90th-percentile optimistic fractional error,
+capped at 30% of the raw remaining forecast. It never increases solar credit.
+Diagnostics expose sample count, bias, absolute error, raw forecast and reserve;
+this empirical reserve is not a probabilistic weather guarantee. Both scalar
+and period energy use the same adjustment; dashboard reads do not train history.
+The per-entry daily-energy store retains at most 240 outcomes over 90 days and
+16 pending snapshots. Calibration history survives daily-total resets.
