@@ -50,6 +50,8 @@ const DAILY_OPERATION_SUNSET_ZERO_INTERVALS = 4;
 // names in translations/*.json so the panel reads consistently with HA.
 const I18N = {
   en: {
+    decisionUnknown: "Unknown",
+    decisionEvidence: "Owner: {owner} · Command: {power} W · Charge/discharge ceilings: {charge}/{discharge} W · Limits: {limits} · Release: {release}",
     commandPending: "Sending setting…",
     commandAccepted: "Setting accepted. Check live power to confirm battery response.",
     commandFailed: "Setting failed: {error}",
@@ -2223,6 +2225,7 @@ class MarstekVenusPanel extends HTMLElement {
         acW != null ? -acW - cellAcoW + (mpptW || 0) : battPwrW;
       batteries.push({
         dev,
+        controlDeviceKey: socObj.attributes?.control_device_key,
         soc: this._num(socObj),
         powerW,
         mpptW,
@@ -5705,6 +5708,7 @@ class MarstekVenusPanel extends HTMLElement {
         // model label rides on the battery_soc entity attributes (device-registry
         // model is hardcoded "Venus"): Marstek version / Zendure product.
         model: (socObj.attributes && socObj.attributes.model) || null,
+        controlDeviceKey: socObj.attributes?.control_device_key,
         soc: this._num(socObj),
         // Net cell flow (+charge / -discharge). On Venus A/D this includes MPPT;
         // on AC-only units it remains the inverse of ac_power.
@@ -5941,7 +5945,12 @@ class MarstekVenusPanel extends HTMLElement {
     info.innerHTML = `<summary><ha-icon icon="mdi:information-outline"></ha-icon>${this._t("deviceInfo")}</summary><div class="bat-info-grid"></div>`;
     card.appendChild(info);
 
+    const decision = document.createElement("p");
+    decision.className = "bat-decision";
+    card.appendChild(decision);
+
     this._batCards[b.dev] = {
+      decision,
       card,
       name: head.querySelector(".bat-name"),
       state: head.querySelector(".bat-state"),
@@ -6001,6 +6010,19 @@ class MarstekVenusPanel extends HTMLElement {
 
   _patchBatteryCard(r, b) {
     r.name.textContent = b.name || this._t("battery");
+    if (r.decision) {
+      const states = Object.values(this._hass.states);
+      const evidence = states.map(state => state.attributes?.battery_decisions?.[b.controlDeviceKey]).find(Boolean);
+      const unknown = this._t("decisionUnknown");
+      r.decision.textContent = evidence ? this._t("decisionEvidence", {
+        owner: evidence.owner,
+        power: evidence.commanded_power_w ?? unknown,
+        charge: evidence.charge_ceiling_w ?? unknown,
+        discharge: evidence.discharge_ceiling_w ?? unknown,
+        limits: Object.entries(evidence.blockers || {}).flatMap(([direction, reasons]) => reasons.map(reason => `${direction}: ${reason}`)).join("; ") || "—",
+        release: evidence.release_times?.join("; ") || unknown,
+      }) : unknown;
+    }
 
     // inverter-state chip (localized; tone by state)
     const inv = b.inverter;
@@ -6283,6 +6305,8 @@ class MarstekVenusPanel extends HTMLElement {
     if (c.domain === "switch") {
       const btn = document.createElement("button");
       btn.className = "ctl-toggle";
+      btn.setAttribute("role", "switch");
+      btn.setAttribute("aria-label", cLabel);
       btn.innerHTML = `<span class="ctl-knob"></span>`;
       btn.addEventListener("click", () =>
         this._sendCommand("switch", "toggle", { entity_id: id }, btn)
@@ -6292,6 +6316,7 @@ class MarstekVenusPanel extends HTMLElement {
     } else if (c.domain === "select") {
       const sel = document.createElement("select");
       sel.className = "ctl-select";
+      sel.setAttribute("aria-label", cLabel);
       sel.addEventListener("change", () =>
         this._sendCommand("select", "select_option", { entity_id: id, option: sel.value }, sel)
       );
@@ -6303,6 +6328,7 @@ class MarstekVenusPanel extends HTMLElement {
       wrap.className = "ctl-num";
       const range = document.createElement("input");
       range.type = "range";
+      range.setAttribute("aria-label", cLabel);
       this._wireRangeInteraction(range);
       const valEl = document.createElement("span");
       valEl.className = "ctl-val";
@@ -6333,6 +6359,7 @@ class MarstekVenusPanel extends HTMLElement {
     const focused = this.shadowRoot && this.shadowRoot.activeElement === w.el;
     if (w.type === "switch") {
       w.el.classList.toggle("on", state.state === "on");
+      w.el.setAttribute("aria-checked", String(state.state === "on"));
     } else if (w.type === "select") {
       const opts = Array.isArray(state.attributes.options) ? state.attributes.options : [];
       const sig = opts.join("|");
@@ -7054,11 +7081,21 @@ class MarstekVenusPanel extends HTMLElement {
         });
       }
     }
+    if (k.classList.contains("ctl-k-info")) {
+      k.tabIndex = 0;
+      k.setAttribute("role", "button");
+      k.addEventListener("keydown", (event) => {
+        if (["Enter", " "].includes(event.key)) { event.preventDefault(); k.click(); }
+        if (event.key === "Escape") this._hideInfoPopover();
+      });
+    }
     frag.appendChild(k);
 
     if (domain === "switch") {
       const btn = document.createElement("button");
       btn.className = "ctl-toggle";
+      btn.setAttribute("role", "switch");
+      btn.setAttribute("aria-label", label);
       btn.innerHTML = `<span class="ctl-knob"></span>`;
       btn.addEventListener("click", () => this._sendCommand("switch", "toggle", { entity_id: id }, btn));
       frag.appendChild(btn);
@@ -7067,6 +7104,7 @@ class MarstekVenusPanel extends HTMLElement {
     } else if (domain === "select") {
       const sel = document.createElement("select");
       sel.className = "ctl-select";
+      sel.setAttribute("aria-label", label);
       sel.addEventListener("change", () =>
         this._sendCommand("select", "select_option", { entity_id: id, option: sel.value }, sel)
       );
@@ -7085,6 +7123,7 @@ class MarstekVenusPanel extends HTMLElement {
       wrap.className = "ctl-num";
       const range = document.createElement("input");
       range.type = "range";
+      range.setAttribute("aria-label", label);
       this._wireRangeInteraction(range);
       const valEl = document.createElement("span");
       valEl.className = "ctl-val";
@@ -7120,6 +7159,7 @@ class MarstekVenusPanel extends HTMLElement {
     if (w.type === "switch") {
       const shown = w.invert ? state.state !== "on" : state.state === "on";
       w.el.classList.toggle("on", shown);
+      w.el.setAttribute("aria-checked", String(shown));
       // gated feature switch: show/hide its sibling param rows when toggled
       if (w.gatedNodes) for (const n of w.gatedNodes) n.style.display = shown ? "" : "none";
     } else if (w.type === "select") {
