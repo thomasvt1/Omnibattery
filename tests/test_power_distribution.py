@@ -142,8 +142,8 @@ def test_distribute_zero_capacity_returns_zeros():
 def test_distribute_rounds_to_5w():
     a, b = _coord("a", 1000), _coord("b", 1000)
     c = _build([a, b])
-    # 996/2 = 498 -> rounds to nearest 5 W = 500.
-    assert c._distribute_power_by_limits(996, [a, b], is_charging=False) == {a: 500, b: 500}
+    # 996/2 = 498: largest-remainder quantization must stay below 996 W.
+    assert c._distribute_power_by_limits(996, [a, b], is_charging=False) == {a: 500, b: 495}
 
 
 def test_distribute_charge_path_is_identity_on_limit():
@@ -304,3 +304,25 @@ async def test_rebalance_releases_expired_hold_and_rewrites():
     # Holds expired and load now fits one battery -> reselect to [a], rewrite both.
     assert await c._rebalance_expired_load_sharing_hold(grid_w=-500, target_w=0) is True
     assert calls == [("a", 0, 500), ("b", 0, 0)]
+
+
+def test_quantization_never_raises_an_803_watt_ceiling():
+    a=_coord('a',803)
+    pd=_build([a])
+    assert pd._distribute_power_by_limits(803,[a],False)=={a:800}
+
+
+def test_quantization_preserves_system_budget_and_mixed_limits():
+    import random
+    randomizer=random.Random(2026)
+    for charging in (True,False):
+        for _ in range(200):
+            coords=[_coord(str(i),randomizer.randint(0,3000)) for i in range(5)]
+            pd=_build(coords)
+            budget=randomizer.uniform(0,9000)
+            result=pd._distribute_power_by_limits(budget,coords,charging)
+            assert sum(result.values()) <= budget
+            assert all(0 <= result[c] <= c.max_charge_power and result[c]%5==0 for c in coords)
+    coords=[_coord('a',803),_coord('b',803)]
+    result=_build(coords)._distribute_power_by_limits(1598,coords,False)
+    assert sum(result.values())==1595

@@ -43,7 +43,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 
 ### 6. Preserve individual and fleet power caps after quantization
 
-- Status: planned
+- Status: completed (implementation PR linked from the issue)
 - Issue: [6](https://github.com/thomasvt1/Omnibattery/issues/6)
 - Scope: Quantize allocations down at hard limits and distribute remaining 5 W increments only within per-device and aggregate budgets.
 - Acceptance: 803 W never allocates 805 W; total allocation never exceeds a 1598 W budget; heterogeneous fleet and charging/discharging invariants are tested.

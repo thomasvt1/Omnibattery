@@ -45,3 +45,10 @@ Battery cards show the live control owner, last commanded power, configured
 ceilings, blocking reasons and known release times. Unknown commands or release
 times remain unknown. These values describe control evidence, not proof that a
 physical battery followed the command.
+
+## Power quantization
+
+Allocation floors each share to 5 W, then assigns affordable increments by largest
+remainder. Individual ceilings and the aggregate request are enforced after
+rounding. A small unallocatable remainder is left unused rather than exceeding a
+limit. The existing phase-protection pass can further reduce this allocation.

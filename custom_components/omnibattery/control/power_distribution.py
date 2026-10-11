@@ -133,6 +133,8 @@ class PowerDistribution:
             is_charging,
         )
 
+        budget = max(0.0, remaining_power)
+
         # What each share is measured against: the power limit on discharge,
         # the room left on charge. The cap below stays the power limit either way.
         weights = (
@@ -155,7 +157,7 @@ class PowerDistribution:
                 share = remaining_power * (weights[c] / current_capacity)
                 if share >= limits[c]:
                     # This battery is at its limit
-                    allocation[c] = self._round_to_5w(limits[c])
+                    allocation[c] = limits[c]
                     remaining_power -= limits[c]
                     remaining_batteries.remove(c)
                     all_fit = False
@@ -164,13 +166,28 @@ class PowerDistribution:
                 # All remaining batteries can handle their proportional share
                 for c in remaining_batteries:
                     share = remaining_power * (weights[c] / current_capacity)
-                    allocation[c] = self._round_to_5w(share)
+                    allocation[c] = share
                 break
 
         # Ensure all batteries have an entry
         for c in available_batteries:
             if c not in allocation:
                 allocation[c] = 0
+
+        # Quantization is part of the safety envelope: floor first, then give
+        # each largest remainder one increment only if both ceilings allow it.
+        raw = dict(allocation)
+        allocation = {c: max(0, math.floor(min(raw[c], limits[c]) / 5) * 5)
+                      for c in available_batteries}
+        remaining_steps = max(0, math.floor((budget - sum(allocation.values())) / 5))
+        ranked = sorted(available_batteries,
+                        key=lambda c: raw[c] - allocation[c], reverse=True)
+        for c in ranked:
+            if remaining_steps <= 0:
+                break
+            if raw[c] > allocation[c] and allocation[c] + 5 <= limits[c]:
+                allocation[c] += 5
+                remaining_steps -= 1
 
         # Preserve the normal selector and proportional distribution exactly.
         # Three-phase protection is a final aggregate cap on that plan: it must
