@@ -178,7 +178,7 @@ class _LedgerEntry:
     import_price: float | None
 
 
-def _valid_battery(snapshot: BatterySnapshot) -> bool:
+def valid_discharge_battery(snapshot: BatterySnapshot) -> bool:
     """A battery that cannot discharge or reports bad data sells nothing.
 
     Never averaged into the aggregate: an ineligible battery's floor and
@@ -471,7 +471,7 @@ def plan_high_price_discharge(
         max(0.0, slot.consumption_kwh - slot.solar_kwh) for slot in working[priced_end:]
     )
 
-    valid_batteries = [battery for battery in batteries if _valid_battery(battery)]
+    valid_batteries = [battery for battery in batteries if valid_discharge_battery(battery)]
     usable_energy_kwh = sum(
         max(0.0, (battery.soc_pct - battery.floor_soc_pct) / 100.0 * battery.capacity_kwh)
         * efficiency

@@ -45,6 +45,7 @@ from ..pricing import PriceSlot
 from ..pricing.curtailment import distribute_solar_forecast
 from ..pricing.discharge_reserve import consumption_by_slot
 from ..pricing.high_price_discharge import (
+    valid_discharge_battery,
     STATUS_FAIL_SAFE,
     STATUS_PLANNED,
     HighPriceDischargePlan,
@@ -346,7 +347,7 @@ class HighPriceDischargeManager:
             snapshots = pricing._curtailment_battery_snapshots()
             participating = [c for c, snapshot in zip(
                 getattr(self._controller, "coordinators", ()), snapshots
-            ) if snapshot.eligible and snapshot.can_discharge]
+            ) if valid_discharge_battery(snapshot)]
             plan = plan_high_price_discharge(
                 slots,
                 snapshots,

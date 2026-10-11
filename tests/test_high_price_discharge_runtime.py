@@ -627,13 +627,20 @@ async def test_energy_platform_exception_keeps_fill_empty(monkeypatch):
     assert manager._solar_wh_hours == {}
 
 
-def test_efficiency_bound_ignores_nonparticipants(monkeypatch):
+@pytest.mark.parametrize("invalid", ["offline", "soc", "capacity", "floor", "power"])
+def test_efficiency_bound_ignores_nonparticipants(monkeypatch, invalid):
     from custom_components.omnibattery.energy_model import BatteryEnergyModel
     from custom_components.omnibattery.control import high_price_discharge as module
     pricing=_pricing()
+    bad = dict(name='offline', soc_pct=80, capacity_kwh=10, max_soc_pct=100,
+               floor_soc_pct=10, max_discharge_power_w=2500, eligible=True, can_discharge=True)
+    if invalid == 'offline':
+        bad['eligible'] = False
+    else:
+        bad[{'soc':'soc_pct','capacity':'capacity_kwh','floor':'floor_soc_pct','power':'max_discharge_power_w'}[invalid]] = float('nan')
     pricing._curtailment_battery_snapshots=lambda:[
         BatterySnapshot('healthy',80,10,100,10,2500,True,True),
-        BatterySnapshot('offline',80,10,100,10,2500,False,False)]
+        BatterySnapshot(**bad)]
     coords=[SimpleNamespace(capabilities=SimpleNamespace(energy_model=BatteryEnergyModel(.8,.95))),
             SimpleNamespace(capabilities=SimpleNamespace(energy_model=BatteryEnergyModel(.6,.6)))]
     captured={}
