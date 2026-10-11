@@ -54,14 +54,28 @@ def test_invalid_driver_efficiency_rejected(value):
     with pytest.raises(ValueError): BatteryEnergyModel(charge_efficiency=value)
 
 
-def test_planner_efficiency_uses_dispatch_eligibility():
+def test_planner_efficiency_uses_future_eligibility():
     from custom_components.omnibattery.pricing.engine import PricingManager
     healthy=battery(BatteryEnergyModel(.95,.9))
     offline=battery(BatteryEnergyModel(.6,.8))
-    requested=[]
-    def available(*,is_charging):
-        requested.append(is_charging)
-        return [healthy]
-    manager=PricingManager(None,SimpleNamespace(_get_available_batteries=available))
+    healthy.is_available=True
+    offline.is_available=False
+    manager=PricingManager(None,SimpleNamespace(
+        _get_available_batteries=lambda **kw: [],  # temporary EV charge pause
+        get_charge_blockers=lambda _: {"ev_pause":{}},
+    ))
     assert manager._charge_efficiency_bound([healthy,offline])==.95
-    assert requested==[True]
+    healthy.capabilities=SimpleNamespace(energy_model=BatteryEnergyModel(.6,.8))
+    assert manager._charge_efficiency_bound([healthy])==.6
+    healthy.is_available=False
+    assert manager._charge_efficiency_bound([healthy])==.6
+
+
+@pytest.mark.parametrize('attribute', ['battery_manual_mode_enabled','rs485_user_disabled'])
+def test_owned_battery_does_not_reduce_healthy_model(attribute):
+    from custom_components.omnibattery.pricing.engine import PricingManager
+    healthy=battery(BatteryEnergyModel(.95,.9))
+    excluded=battery(BatteryEnergyModel(.6,.8))
+    setattr(excluded,attribute,True)
+    manager=PricingManager(None,SimpleNamespace())
+    assert manager._charge_efficiency_bound([healthy,excluded])==.95

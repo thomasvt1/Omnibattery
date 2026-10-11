@@ -4160,10 +4160,24 @@ class PricingManager:
         return True
 
     def _charge_efficiency_bound(self, fallback):
-        """Match the automatic dispatch set, not cached capacity-accounting data."""
-        available = getattr(self._controller, "_get_available_batteries", None)
-        batteries = available(is_charging=True) if callable(available) else fallback
-        return fleet_charge_efficiency(batteries)
+        """Bound future charging by reachable, automatically owned batteries.
+
+        Current operation blocks, SOC hysteresis and predictive targets can
+        expire before a future tariff slot. They must not discard a known
+        converter model. Ownership/connectivity exclusions remain effective.
+        """
+        controller = self._controller
+        tracker = getattr(controller, "_non_responsive", None)
+        candidates = [battery for battery in fallback
+            if getattr(battery, "is_available", True)
+            and not getattr(battery, "battery_manual_mode_enabled", False)
+            and not getattr(battery, "rs485_user_disabled", False)
+            and not getattr(controller, "_is_backup_function_active", lambda _: False)(battery)
+            and not getattr(controller, "_is_manual_slot_owned", lambda _: False)(battery)
+            and not (tracker is not None and tracker.is_excluded(battery))]
+        # When no device is reachable, never replace a known lower efficiency
+        # with a more optimistic legacy assumption while capacity is projected.
+        return fleet_charge_efficiency(candidates or fallback)
 
     def _read_remaining_solar_reading(self, now: datetime) -> float | None:
         """Remaining-solar reading, or None when the sensor said nothing usable.
