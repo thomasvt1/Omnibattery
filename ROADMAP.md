@@ -15,7 +15,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 
 ### 2. Enforce solar forecast freshness and validity
 
-- Status: planned
+- Status: completed (implementation PR linked from the issue)
 - Issue: [2](https://github.com/thomasvt1/Omnibattery/issues/2)
 - Scope: Add forecast freshness metadata, validate last report/issuance and forecast date, reject stale numeric forecasts with explicit fallback diagnostics, and preserve lightweight consumers.
 - Acceptance: Old numeric forecasts cannot suppress grid charging; unchanged recently reported states remain valid; freshness and fallback reasons are observable and tested.
