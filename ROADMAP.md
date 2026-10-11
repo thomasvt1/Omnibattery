@@ -22,7 +22,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 
 ### 3. Handle invalid and missing thermal telemetry conservatively
 
-- Status: planned
+- Status: completed (implementation PR linked from the issue)
 - Issue: [3](https://github.com/thomasvt1/Omnibattery/issues/3)
 - Scope: Reject non-finite thermal inputs, retain the last valid derated cap for a bounded interval, expose degraded telemetry status, and document the eventual fallback.
 - Acceptance: NaN/Infinity never crash limiting; hot-to-missing transitions retain their cap temporarily; expiry and recovery are tested.

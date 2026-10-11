@@ -243,3 +243,23 @@ def test_hook_discharge_derates_when_opted_in():
     coord = _Coord(data={"internal_temperature": 45})
     coord.max_discharge_power = 2500
     assert _limit(_ctrl_self(apply_discharge=True), coord, False) == 1750
+
+@pytest.mark.parametrize('invalid', [float('nan'), float('inf'), -float('inf'), None, 'bad'])
+def test_invalid_temperature_holds_hot_cap_then_expires(monkeypatch, invalid):
+    from custom_components.omnibattery.control import temperature_limit as module
+    clock=[0.0]
+    monkeypatch.setattr(module.time,'monotonic',lambda:clock[0])
+    coord=_Coord(data={'internal_temperature':55})
+    mgr=_mgr(coords=[coord])
+    assert mgr.apply_temperature_limit(coord,2500)==1000
+    coord.data['internal_temperature']=invalid
+    clock[0]=10
+    assert mgr.apply_temperature_limit(coord,2500)==1000
+    assert mgr.apply_temperature_limit(coord,500)==500
+    assert mgr.get_status()['bat']['telemetry_status']=='held'
+    clock[0]=301
+    assert mgr.apply_temperature_limit(coord,2500)==2500
+    assert mgr.get_status()['bat']['telemetry_status']=='unavailable'
+    coord.data['internal_temperature']=35
+    assert mgr.apply_temperature_limit(coord,2500)==2500
+    assert mgr.get_status()['bat']['telemetry_status']=='valid'

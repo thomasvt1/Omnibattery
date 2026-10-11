@@ -19,3 +19,12 @@ reports of an unchanged value remain valid through Home Assistant's
 Invalid or stale forecasts contribute zero solar energy through the existing
 conservative fallback. Integration diagnostics expose freshness, source and
 conversion. No stale numeric value is treated as evidence of future production.
+
+## Thermal telemetry
+
+Non-finite temperatures are missing readings. If a valid reading previously
+reduced power, its cap is retained for up to five minutes during a sensor gap,
+never above a newer incoming limit. After expiry the optional software derate
+returns the incoming limit; hardware BMS protections remain authoritative.
+Diagnostics distinguish valid, held and unavailable readings and report the held
+charge cap. Charge and discharge hold histories are separate.

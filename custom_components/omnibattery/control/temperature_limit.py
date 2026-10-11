@@ -11,17 +11,21 @@ This mirrors ``MaxSocChargeManager.apply_charge_taper``'s cap-and-return
 contract: it is called from ``_battery_power_limit`` with the current per-battery
 limit and returns a limit that is never higher than the one passed in. When the
 feature is disabled or the temperature is unavailable it returns the limit
-unchanged (fail-safe: a sensor gap never throttles charging).
+unchanged after a bounded hold of the last valid derated cap. A missing sensor
+is reported explicitly; this optional derate is not a substitute for the BMS.
 """
 from __future__ import annotations
 
 import logging
+import math
+import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
+THERMAL_HOLD_SECONDS = 300.0
 
 
 class TemperatureChargeLimitManager:
@@ -30,6 +34,7 @@ class TemperatureChargeLimitManager:
     def __init__(self, hass: "HomeAssistant", controller: Any) -> None:
         self._hass = hass
         self._controller = controller
+        self._last_limits: dict[tuple[int, bool], tuple[float, int]] = {}
 
     def _derate_factor(self, temp: float) -> float:
         """Return the charge-power scale (0..1) for a given temperature.
@@ -62,21 +67,30 @@ class TemperatureChargeLimitManager:
     def _apply(self, coordinator, limit: int, is_charging: bool) -> int:
         """Cap ``limit`` by the thermal derate factor (fail-safe passthrough)."""
         temp = (coordinator.data or {}).get("internal_temperature")
-        if temp is None:
-            return limit
+        key = (id(coordinator), is_charging)
+        now = time.monotonic()
         try:
             temp_f = float(temp)
         except (TypeError, ValueError):
+            temp_f = math.nan
+        if not math.isfinite(temp_f):
+            previous = self._last_limits.get(key)
+            if previous is not None and now - previous[0] <= THERMAL_HOLD_SECONDS:
+                return min(limit, previous[1])
+            self._last_limits.pop(key, None)
             return limit
 
         factor = self._derate_factor(temp_f)
         if factor >= 1.0:
+            self._last_limits[key] = (now, limit)
             return limit
         derated = min(limit, int(round(limit * factor)))
         # Hard floor: never command a non-zero power below the battery's minimum
         # reliable operating power (0 when the driver declares none). Never raise
         # above a limit that was already below that floor.
-        return max(derated, min(self._min_power(coordinator, is_charging), limit))
+        result = max(derated, min(self._min_power(coordinator, is_charging), limit))
+        self._last_limits[key] = (now, result)
+        return result
 
     def apply_temperature_limit(self, coordinator, limit: int) -> int:
         """Cap the per-battery charge limit by the thermal derate factor."""
@@ -106,15 +120,22 @@ class TemperatureChargeLimitManager:
                 temp_f = float(temp) if temp is not None else None
             except (TypeError, ValueError):
                 temp_f = None
-            factor = self._derate_factor(temp_f) if temp_f is not None else 1.0
+            if temp_f is not None and not math.isfinite(temp_f):
+                temp_f = None
+            previous = self._last_limits.get((id(coordinator), True))
+            held = previous is not None and time.monotonic() - previous[0] <= THERMAL_HOLD_SECONDS
+            factor = self._derate_factor(temp_f) if temp_f is not None else None
             status[coordinator.name] = {
                 "enabled": c.temp_charge_limit_enabled,
                 "apply_discharge": c.temp_limit_apply_discharge,
-                "internal_temperature": temp,
+                "internal_temperature": temp_f,
+                "telemetry_status": "valid" if temp_f is not None else ("held" if held else "unavailable"),
+                "held_charge_limit_w": previous[1] if held and temp_f is None else None,
+                "hold_seconds": THERMAL_HOLD_SECONDS,
                 "limit_c": c._temp_charge_limit_c,
                 "band_c": c._temp_charge_limit_band_c,
                 "floor_pct": c._temp_charge_limit_floor_pct,
-                "derate_factor": round(factor, 3),
+                "derate_factor": round(factor, 3) if factor is not None else None,
                 "derating": c.temp_charge_limit_enabled and temp_f is not None and factor < 1.0,
             }
         return status
