@@ -3003,7 +3003,7 @@ class PricingManager:
                     price_slots=tuple(slots),
                     total_required_kwh=required,
                     effective_power_kw=power_kw,
-                    charge_efficiency=fleet_charge_efficiency(eligible),
+                    charge_efficiency=self._charge_efficiency_bound(eligible),
                     headroom_kwh=headroom,
                     usable_initial_kwh=usable,
                     max_price_threshold=price_ceiling,
@@ -4158,6 +4158,12 @@ class PricingManager:
         if self._remaining_solar_today_kwh(now) <= 0.0:
             return False
         return True
+
+    def _charge_efficiency_bound(self, fallback):
+        """Match the automatic dispatch set, not cached capacity-accounting data."""
+        available = getattr(self._controller, "_get_available_batteries", None)
+        batteries = available(is_charging=True) if callable(available) else fallback
+        return fleet_charge_efficiency(batteries)
 
     def _read_remaining_solar_reading(self, now: datetime) -> float | None:
         """Remaining-solar reading, or None when the sensor said nothing usable.

@@ -52,3 +52,16 @@ def test_invalid_measurement_falls_back(change):
 @pytest.mark.parametrize('value',[0,1.1,float('nan'),float('inf')])
 def test_invalid_driver_efficiency_rejected(value):
     with pytest.raises(ValueError): BatteryEnergyModel(charge_efficiency=value)
+
+
+def test_planner_efficiency_uses_dispatch_eligibility():
+    from custom_components.omnibattery.pricing.engine import PricingManager
+    healthy=battery(BatteryEnergyModel(.95,.9))
+    offline=battery(BatteryEnergyModel(.6,.8))
+    requested=[]
+    def available(*,is_charging):
+        requested.append(is_charging)
+        return [healthy]
+    manager=PricingManager(None,SimpleNamespace(_get_available_batteries=available))
+    assert manager._charge_efficiency_bound([healthy,offline])==.95
+    assert requested==[True]
