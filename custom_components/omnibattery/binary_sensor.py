@@ -21,6 +21,7 @@ from .const import (
 from .infra.coordinator import MarstekVenusDataUpdateCoordinator
 from .infra.entity_naming import english_entity_id, system_entity_id, SYSTEM_UNIQUE_ID_PREFIX
 from .solar_forecast import read_solar_forecast_kwh
+from .pricing.time_math import instant
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -424,7 +425,7 @@ class CurtailmentStatusSensor(BinarySensorEntity):
             return attrs
         now = datetime.now()
         next_window = next(
-            (slot.start.isoformat() for slot in plan.risk_slots if slot.end > now),
+            (slot.start.isoformat() for slot in plan.risk_slots if instant(slot.end) > instant(now)),
             None,
         )
         required_headroom = max(0.0, float(plan.required_headroom_kwh))

@@ -34,6 +34,7 @@ from typing import Mapping, Sequence
 from ..const import CHARGE_EFFICIENCY
 from . import PriceSlot
 from .curtailment import BatterySnapshot
+from .time_math import instant, elapsed
 
 
 EPSILON = 1e-6
@@ -61,7 +62,7 @@ def _finite(value: object) -> bool:
 
 def _duration_hours(start: datetime, end: datetime) -> float:
     try:
-        return max(0.0, (end - start).total_seconds() / 3600.0)
+        return max(0.0, (elapsed(end, start)).total_seconds() / 3600.0)
     except (AttributeError, TypeError):
         return 0.0
 
@@ -86,7 +87,7 @@ class AbsorptionSlot:
         return max(0.0, self.expected_surplus_kwh) * CHARGE_EFFICIENCY
 
     def contains(self, moment: datetime) -> bool:
-        return self.start <= moment < self.end
+        return instant(self.start) <= instant(moment) < instant(self.end)
 
 
 @dataclass
@@ -124,7 +125,7 @@ class AbsorptionPlan:
         return sum(
             slot.absorbable_kwh
             for slot in self.selected_slots
-            if slot.end > moment
+            if instant(slot.end) > instant(moment)
         )
 
 
@@ -256,7 +257,7 @@ def plan_surplus_absorption(
     if not price_slots:
         plan.status, plan.reason = STATUS_FAIL_SAFE, "missing_prices"
         return plan
-    if deadline is None or not isinstance(deadline, datetime) or deadline <= evaluated_at:
+    if deadline is None or not isinstance(deadline, datetime) or instant(deadline) <= instant(evaluated_at):
         plan.status, plan.reason = STATUS_FAIL_SAFE, "no_solar_window_left"
         return plan
     if max_charge_power_w is None or not _finite(max_charge_power_w) or float(max_charge_power_w) <= 0:
@@ -273,9 +274,9 @@ def plan_surplus_absorption(
             (
                 slot
                 for slot in price_slots
-                if slot.end > evaluated_at
-                and slot.start < deadline
-                and slot.end > slot.start
+                if instant(slot.end) > instant(evaluated_at)
+                and instant(slot.start) < instant(deadline)
+                and instant(slot.end) > instant(slot.start)
                 and _finite(slot.price)
             ),
             key=lambda slot: slot.start,
@@ -376,7 +377,7 @@ def hold_decision(
     if plan is None or not plan.can_hold:
         return False, plan.reason if plan is not None else STATUS_DISABLED
 
-    if plan.deadline is not None and now >= plan.deadline:
+    if plan.deadline is not None and instant(now) >= instant(plan.deadline):
         return False, REASON_PAST_DEADLINE
 
     target = live_target_kwh if _finite(live_target_kwh) else plan.target_kwh
@@ -398,7 +399,7 @@ def hold_decision(
     future_prices = [
         slot.export_price
         for slot in plan.slots
-        if slot.start >= current.end and slot.absorbable_kwh > EPSILON
+        if instant(slot.start) >= instant(current.end) and slot.absorbable_kwh > EPSILON
     ]
     if not future_prices:
         return False, "no_cheaper_slot_ahead"

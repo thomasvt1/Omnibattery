@@ -43,6 +43,7 @@ from ..pricing.discharge_reserve import (
     reserve_soc_pct as _reserve_soc_pct,
     usable_energy_kwh,
 )
+from ..pricing.time_math import elapsed
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
@@ -430,7 +431,7 @@ class DischargeReserveManager:
                 float(solar.get(slot, 0.0) or 0.0)
                 - float(consumption.get(slot, 0.0) or 0.0),
             )
-            duration_h = max(0.0, (slot.end - slot.start).total_seconds() / 3600.0)
+            duration_h = max(0.0, (elapsed(slot.end, slot.start)).total_seconds() / 3600.0)
             absorbed_kwh = min(raw_kwh, charge_power_w * duration_h / 1000.0)
             if hold_state is not None:
                 known_starts, selected_starts = hold_state

@@ -13,6 +13,7 @@ from typing import Iterable, Sequence
 
 from ..const import CHARGE_EFFICIENCY
 from . import PriceSlot
+from .time_math import instant, elapsed, time_min, time_max
 
 ENERGY_TOLERANCE_KWH = 0.05
 _EPSILON = 1e-9
@@ -26,7 +27,7 @@ class EnergyInterval:
     solar_kwh: float
 
     def __post_init__(self) -> None:
-        if self.end <= self.start:
+        if instant(self.end) <= instant(self.start):
             raise ValueError("energy interval end must be after start")
         for name in ("consumption_kwh", "solar_kwh"):
             value = float(getattr(self, name))
@@ -197,7 +198,7 @@ def simulate_allocations(
         # slot has ended.  Deadline allocation already caps crossing slots to
         # the capacity deliverable before the deadline.
         for index, allocation in enumerate(allocated):
-            if index not in applied_allocations and allocation.slot.end <= interval.end:
+            if index not in applied_allocations and instant(allocation.slot.end) <= instant(interval.end):
                 energy += allocation.planned_battery_kwh
                 applied_allocations.add(index)
         energy = min(
@@ -276,7 +277,7 @@ def build_energy_deadlines(
 
 
 def _duration_hours(start: datetime, end: datetime) -> float:
-    return max(0.0, (end - start).total_seconds() / 3600.0)
+    return max(0.0, (elapsed(end, start)).total_seconds() / 3600.0)
 
 
 def allocate_price_slots(
@@ -306,8 +307,8 @@ def allocate_price_slots(
     efficiency = max(0.0, min(1.0, float(charge_efficiency)))
     candidates = [
         slot for slot in price_slots
-        if slot.end > now
-        and slot.start < horizon_end
+        if instant(slot.end) > instant(now)
+        and instant(slot.start) < instant(horizon_end)
         and math.isfinite(float(slot.price))
         and (max_price_threshold is None or slot.price <= max_price_threshold)
     ]
@@ -321,8 +322,8 @@ def allocate_price_slots(
         deadline: datetime | None = None,
         not_before: datetime | None = None,
     ) -> float:
-        start = max(now, slot.start, not_before or now)
-        end = min(slot.end, horizon_end, deadline or horizon_end)
+        start = time_max(now, slot.start, not_before or now)
+        end = time_min(slot.end, horizon_end, deadline or horizon_end)
         return power * _duration_hours(start, end) * efficiency
 
     no_grid = simulate_allocations(
@@ -342,14 +343,14 @@ def allocate_price_slots(
 
     def allocation_start(deadline: datetime) -> datetime:
         return max(
-            (instant for instant in full_at if instant < deadline),
+            (stamp for stamp in full_at if instant(stamp) < instant(deadline)),
             default=now,
         )
 
     def in_segment(slot: PriceSlot, start: datetime, deadline: datetime) -> bool:
         # Solar only displaces the part of a slot that lands before the
         # projected fill, so a straddling slot still serves the later deadline.
-        return slot.end > start and slot.start < deadline
+        return instant(slot.end) > instant(start) and instant(slot.start) < instant(deadline)
 
     segment_required: dict[datetime, float] = {}
     for deadline in deadlines:
@@ -365,7 +366,7 @@ def allocate_price_slots(
         allocated_before_segment = sum(
             amount
             for slot, amount in allocations.items()
-            if slot.end <= start
+            if instant(slot.end) <= instant(start)
         )
         cumulative_target = min(
             deadline.required_cumulative_kwh,
@@ -393,7 +394,7 @@ def allocate_price_slots(
         for slot in eligible:
             free = max(
                 0.0,
-                capacity(slot, deadline.deadline, start) - allocations.get(slot, 0.0),
+                elapsed(capacity(slot, deadline.deadline, start), allocations.get(slot, 0.0)),
             )
             take = min(missing, free)
             if take <= _EPSILON:
@@ -401,7 +402,7 @@ def allocate_price_slots(
             allocations[slot] = allocations.get(slot, 0.0) + take
             previous = allocation_deadlines.get(slot)
             allocation_deadlines[slot] = (
-                deadline.deadline if previous is None else min(previous, deadline.deadline)
+                deadline.deadline if previous is None else time_min(previous, deadline.deadline)
             )
             missing -= take
             if missing <= _EPSILON:

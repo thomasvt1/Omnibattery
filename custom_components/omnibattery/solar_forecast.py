@@ -17,6 +17,7 @@ from .const import (
     CONF_SOLAR_FORECAST_SENSOR,
     T_START_FALLBACK_HOUR,
 )
+from .pricing.time_math import instant
 
 
 ForecastSource = Literal["remaining", "today"]
@@ -44,7 +45,7 @@ class SolarForecastPeriod:
             or self.end.tzinfo is None
         ):
             raise ValueError("solar forecast periods require aware timestamps")
-        if self.end.timestamp() <= self.start.timestamp():
+        if instant(self.end.timestamp()) <= instant(self.start.timestamp()):
             raise ValueError("solar forecast period must have positive duration")
         try:
             energy = float(self.energy_kwh)

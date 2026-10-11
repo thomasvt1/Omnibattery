@@ -28,6 +28,7 @@ from ..pricing.daily_timeline import (
     project_charge_delay,
     simulate_battery_projection,
 )
+from ..pricing.time_math import instant, elapsed, time_min, time_max
 
 
 def _finite(value: Any, default: float = 0.0) -> float:
@@ -107,10 +108,10 @@ def build_daily_operation_projection(
         if not isinstance(start, datetime) or not isinstance(end, datetime):
             continue
         try:
-            if end <= now:
+            if instant(end) <= instant(now):
                 continue
-            duration_s = (end - start).total_seconds()
-            remaining_start = max(start, now)
+            duration_s = (elapsed(end, start)).total_seconds()
+            remaining_start = time_max(start, now)
             remaining_ratio = (
                 max(0.0, (end - remaining_start).total_seconds()) / duration_s
                 if duration_s > 0.0
@@ -143,8 +144,8 @@ def build_daily_operation_projection(
         ):
             context |= CONTEXT_SETPOINT
         scheduled = any(
-            allocation.slot.start < interval.end
-            and allocation.slot.end > remaining_start
+            instant(allocation.slot.start) < instant(interval.end)
+            and instant(allocation.slot.end) > instant(remaining_start)
             for allocation in request.allocations
         )
         if scheduled:
@@ -222,7 +223,7 @@ def build_daily_operation_projection(
 
     charge_availability: list[float] = []
     for interval in projection_inputs:
-        duration_s = max(0.0, (interval.end - interval.start).total_seconds())
+        duration_s = max(0.0, (elapsed(interval.end, interval.start)).total_seconds())
         blocked_s = 0.0
         if (
             delay_starts_at is not None
@@ -232,8 +233,7 @@ def build_daily_operation_projection(
             blocked_s = max(
                 0.0,
                 (
-                    min(interval.end, delay_ends_at)
-                    - max(interval.start, delay_starts_at)
+                    elapsed(time_min(interval.end, delay_ends_at), time_max(interval.start, delay_starts_at))
                 ).total_seconds(),
             )
         charge_availability.append(

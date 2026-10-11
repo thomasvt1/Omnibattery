@@ -15,6 +15,7 @@ from typing import Callable, Iterable, Mapping, Sequence
 
 from ..const import CHARGE_EFFICIENCY
 from . import PriceSlot
+from .time_math import instant, elapsed
 
 
 EPSILON = 1e-6
@@ -108,7 +109,7 @@ class PreDischargeSlot:
 
     @property
     def duration_hours(self) -> float:
-        return max(0.0, (self.end - self.start).total_seconds() / 3600.0)
+        return max(0.0, (elapsed(self.end, self.start)).total_seconds() / 3600.0)
 
 
 @dataclass
@@ -173,11 +174,11 @@ class CurtailmentPlan:
 
 
 def _duration_hours(slot: PriceSlot) -> float:
-    return max(0.0, (slot.end - slot.start).total_seconds() / 3600.0)
+    return max(0.0, (elapsed(slot.end, slot.start)).total_seconds() / 3600.0)
 
 
 def _overlaps(left: PriceSlot | PreDischargeSlot, right: PriceSlot | PreDischargeSlot) -> bool:
-    return left.start < right.end and right.start < left.end
+    return instant(left.start) < instant(right.end) and instant(right.start) < instant(left.end)
 
 
 def _finite(value: object) -> bool:
@@ -304,7 +305,7 @@ def _make_blocks(slots: Sequence[PriceSlot]) -> list[list[PriceSlot]]:
 
     for slot in ordered:
         duration = _duration_hours(slot)
-        contiguous = bool(run) and abs((slot.start - run[-1].end).total_seconds()) < 1
+        contiguous = bool(run) and instant(abs((elapsed(slot.start, run[-1].end)).total_seconds())) < 1
         same_duration = run_duration is not None and abs(duration - run_duration) < 1e-6
         if run and (not contiguous or not same_duration):
             flush()
@@ -461,10 +462,10 @@ def plan_curtailment(
         valid_slots = [
             slot
             for slot in price_slots
-            if slot.end > slot.start and _finite(slot.price)
+            if instant(slot.end) > instant(slot.start) and _finite(slot.price)
         ]
         ordered_slots = sorted(
-            (slot for slot in valid_slots if slot.end > evaluated_at),
+            (slot for slot in valid_slots if instant(slot.end) > instant(evaluated_at)),
             key=lambda slot: slot.start,
         )
     except (AttributeError, TypeError, ValueError):
@@ -607,7 +608,7 @@ def plan_curtailment(
         # The runtime protects against the aggregate daily surplus, so all of
         # that headroom must exist before the first risk window.  A later slot
         # cannot retroactively satisfy an earlier deadline.
-        and slot.end <= earliest_risk_start
+        and instant(slot.end) <= instant(earliest_risk_start)
     ]
     available_energy_by_slot = {}
     for slot in candidates:

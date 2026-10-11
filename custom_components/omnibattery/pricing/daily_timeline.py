@@ -32,6 +32,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from ..const import CHARGE_EFFICIENCY
+from .time_math import instant, elapsed
 
 SCHEMA_VERSION = 1
 INTERVAL_MINUTES = 15
@@ -161,7 +162,7 @@ def _duration_seconds(start: datetime | None, end: datetime | None) -> float:
         return 0.0
     try:
         if start.tzinfo is None and end.tzinfo is None:
-            result = (end - start).total_seconds()
+            result = (elapsed(end, start)).total_seconds()
         else:
             result = _timestamp(end) - _timestamp(start)
     except (OverflowError, TypeError, ValueError):
@@ -919,8 +920,7 @@ def _entry_amount(
         return _non_negative(amount)
     overlap = max(
         0.0,
-        min(_timestamp(window[1]), _timestamp(interval.end))
-        - max(_timestamp(window[0]), _timestamp(interval.start)),
+        elapsed(min(_timestamp(window[1]), _timestamp(interval.end)), max(_timestamp(window[0]), _timestamp(interval.start))),
     )
     window_seconds = _duration_seconds(window[0], window[1])
     return (
@@ -1626,7 +1626,7 @@ def project_charge_delay(
             reason = "projected_time_backup"
 
         for flow in result.intervals:
-            if flow.end is None or _timestamp(flow.end) <= _timestamp(reached_at):
+            if flow.end is None or instant(_timestamp(flow.end)) <= instant(_timestamp(reached_at)):
                 continue
             if flow.solar_kwh + _EPSILON < flow.consumption_kwh:
                 solar_deficit_unlock = flow.start

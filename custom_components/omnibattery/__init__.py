@@ -281,6 +281,7 @@ from .pricing import (
     notifications,
 )
 from .pricing.engine import DynamicPricingEvaluationHorizon, PricingManager
+from .pricing.time_math import instant, elapsed
 
 
 # Predictive charging treats the configured/import ceiling as a regulation
@@ -2081,7 +2082,7 @@ class ChargeDischargeController:
             for raw_slot, slot in slot_pairs:
                 target = self._daily_operation_float(targets.get(raw_slot), 0.0)
                 if target <= 0.0:
-                    duration_h = max(0.0, (slot.end - slot.start).total_seconds() / 3600.0)
+                    duration_h = max(0.0, (elapsed(slot.end, slot.start)).total_seconds() / 3600.0)
                     target = (
                         min(
                             self._daily_operation_float(
@@ -3142,7 +3143,7 @@ class ChargeDischargeController:
             self._pd_quality_settle_until = now + self._pd_quality_step_grace_s
         self._pd_quality_prev_target = active_target
 
-        if pd_limited or now < self._pd_quality_settle_until:
+        if pd_limited or instant(now) < instant(self._pd_quality_settle_until):
             # Keep the timestamp fresh so the EMA resumes smoothly (small dt) instead
             # of seeing one huge gap that would snap it to the post-step value.
             self._pd_quality_last_ts = now
@@ -3501,10 +3502,10 @@ class ChargeDischargeController:
         except Exception as e:
             _LOGGER.error("Error parsing time slot: %s", e)
             return False
-        if start <= end:
-            return start <= now_time <= end
+        if instant(start) <= instant(end):
+            return instant(start) <= instant(now_time) <= instant(end)
         # Midnight crossing: matches if outside the [end, start] gap.
-        return now_time >= start or now_time <= end
+        return instant(now_time) >= instant(start) or instant(now_time) <= instant(end)
 
     def _is_time_slot_allowed(self, coordinator, is_charging: bool) -> bool:
         """Per-battery, per-direction whitelist check for time slots.
@@ -4504,7 +4505,7 @@ class ChargeDischargeController:
         if ac_offgrid is not None and ac_offgrid <= threshold:
             # Offgrid power is zero or a small standby load — check post-backup cooldown
             cooldown_until = self._backup_cooldown_until.get(coordinator)
-            if cooldown_until and now < cooldown_until:
+            if cooldown_until and instant(now) < instant(cooldown_until):
                 remaining = int((cooldown_until - now).total_seconds() / 60)
                 _LOGGER.debug(
                     "%s: Backup cooldown active — %d min remaining before re-entering PD control",
@@ -5527,9 +5528,9 @@ class ChargeDischargeController:
     @staticmethod
     def _time_in_window(t, start, end) -> bool:
         """True if t falls in [start, end], handling overnight (start > end) windows."""
-        if start <= end:
-            return start <= t <= end
-        return t >= start or t <= end
+        if instant(start) <= instant(end):
+            return instant(start) <= instant(t) <= instant(end)
+        return instant(t) >= instant(start) or instant(t) <= instant(end)
 
     def _slots_for_day(self, day_name: str):
         """(start, end) dt_time pairs for charging windows active on the given weekday."""
@@ -5730,7 +5731,7 @@ class ChargeDischargeController:
         ):
             now = datetime.now()
             active_slot = next(
-                (slot for slot in schedule.selected_slots if slot.start <= now < slot.end),
+                (slot for slot in schedule.selected_slots if instant(slot.start) <= instant(now) < instant(slot.end)),
                 None,
             )
             if active_slot is not None:
@@ -6645,7 +6646,7 @@ class ChargeDischargeController:
             return
         # A battery that keeps refusing must not hog the v3 single TCP slot.
         now = time.monotonic()
-        if now - getattr(coordinator, "_manual_reassert_ts", 0.0) < 30:
+        if instant(now - getattr(coordinator, "_manual_reassert_ts", 0.0)) < 30:
             return
         coordinator._manual_reassert_ts = now
         _LOGGER.warning(
@@ -8053,13 +8054,13 @@ class ChargeDischargeController:
             baseline, jump, armed_ts = candidate
             deviation = error - baseline
             if (
-                now - armed_ts <= FEEDFORWARD_CANDIDATE_MAX_AGE_S
+                instant(now - armed_ts) <= instant(FEEDFORWARD_CANDIDATE_MAX_AGE_S)
                 and (deviation > 0) == (jump > 0)
                 and abs(deviation) >= FEEDFORWARD_CONFIRM_RATIO * abs(jump)
             ):
                 sign = 1 if jump > 0 else -1
                 last_ts = self._last_feedforward_monotonic
-                if last_ts is not None and now - last_ts < FEEDFORWARD_COOLDOWN_S:
+                if last_ts is not None and instant(now - last_ts) < instant(FEEDFORWARD_COOLDOWN_S):
                     _LOGGER.debug(
                         "Feedforward: confirmed %.0fW step suppressed by cooldown (%.1fs < %.0fs)",
                         jump, now - last_ts, FEEDFORWARD_COOLDOWN_S,
@@ -8068,7 +8069,7 @@ class ChargeDischargeController:
                 if (
                     last_ts is not None
                     and sign != self._last_feedforward_sign
-                    and now - last_ts < FEEDFORWARD_PULSE_GUARD_S
+                    and instant(now - last_ts) < instant(FEEDFORWARD_PULSE_GUARD_S)
                 ):
                     _LOGGER.debug(
                         "Feedforward: opposite-sign %.0fW step %.1fs after last fire - pulsing load, letting PD average it",
