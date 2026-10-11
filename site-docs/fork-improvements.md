@@ -28,3 +28,11 @@ never above a newer incoming limit. After expiry the optional software derate
 returns the incoming limit; hardware BMS protections remain authoritative.
 Diagnostics distinguish valid, held and unavailable readings and report the held
 charge cap. Charge and discharge hold histories are separate.
+
+## Dashboard writes
+
+Battery and system controls share one command path. A pending command disables
+its control and suppresses duplicate writes to the same entity. The status banner
+announces acceptance or failure; errors clear optimistic slider state and restore
+the latest Home Assistant value. Acceptance means the service completed, not that
+the battery has reached the requested power. Verify response in live telemetry.
