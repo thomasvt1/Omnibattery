@@ -114,3 +114,13 @@ def test_long_positive_energy_gap_is_not_interpolated(kind):
         "2026-10-11T10:00:00Z": 0, "2026-10-11T15:00:00Z": 1000,
     }}})
     assert not curve.periods and curve.reason
+
+
+@pytest.mark.parametrize("kind", ["watts", "watt_hours_period"])
+def test_long_gap_ending_at_zero_does_not_hide_missing_daytime_periods(kind):
+    curve = adapt_native_forecast({"result": {kind: {
+        "2026-10-11T09:00:00Z": 0,
+        "2026-10-11T10:00:00Z": 1000,
+        "2026-10-11T18:00:00Z": 0,
+    }}})
+    assert not curve.periods and curve.reason == "invalid_forecast_solar_" + kind + "_periods"

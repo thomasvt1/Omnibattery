@@ -115,7 +115,7 @@ def adapt_native_forecast(attributes: dict) -> ProviderCurve | None:
             seconds = (stamp - start).total_seconds()
             # Native multi-day curves carry explicit zero-energy night gaps.
             # Positive-energy gaps still need normal period spacing.
-            zero_gap = value == 0 and (kind == 'watt_hours_period' or old_value == 0)
+            zero_gap = value == 0 and old_value == 0
             if not 0 < seconds <= (86400 if zero_gap else 7200):
                 raise ValueError('invalid or missing Forecast.Solar interval')
             energy = value / 1000 if kind == 'watt_hours_period' else (old_value + value) / 2 * seconds / 3_600_000
