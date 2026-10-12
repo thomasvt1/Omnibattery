@@ -26,12 +26,14 @@ battery keeps behaving exactly as it does today.
 from __future__ import annotations
 
 import logging
+import math
 from datetime import datetime
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
-from ..const import CHARGE_EFFICIENCY, PREDICTIVE_MODE_DYNAMIC_PRICING
-from ..pricing.curtailment import BatterySnapshot, distribute_solar_forecast
+from ..const import PREDICTIVE_MODE_DYNAMIC_PRICING
+from ..energy_model import future_charge_efficiency, battery_energy_model
+from ..pricing.curtailment import BatterySnapshot, distribute_solar_forecast, snapshot_discharge_efficiency
 from ..pricing.discharge_reserve import (
     ReservePlan,
     STATUS_DISABLED,
@@ -185,6 +187,7 @@ class DischargeReserveManager:
             # Not knowing what the battery holds is not a reason to hold it.
             self._set_status(0.0, "released", GUARD_FLEET_UNKNOWN)
             return 0.0
+        plan.discharge_efficiency = snapshot_discharge_efficiency(fleet)
         live_usable = usable_energy_kwh(fleet)
         live_capacity = eligible_capacity_kwh(fleet)
         live_space = free_space_kwh(fleet)
@@ -241,6 +244,7 @@ class DischargeReserveManager:
                 free_space_kwh=free_space_kwh(fleet),
                 usable_energy_kwh=usable_energy_kwh(fleet),
                 total_capacity_kwh=eligible_capacity_kwh(fleet),
+                discharge_efficiency=snapshot_discharge_efficiency(fleet),
                 current_price=self._current_price(),
                 min_saving=float(
                     getattr(self._controller, "discharge_reserve_min_saving", 0.0) or 0.0
@@ -332,6 +336,17 @@ class DischargeReserveManager:
                 max_soc = float(coordinator.max_soc)
             except (AttributeError, TypeError, ValueError):
                 continue
+            if (not all(math.isfinite(v) for v in (soc, capacity, floor, max_soc))
+                    or capacity <= 0 or max_soc < floor or not getattr(coordinator, "allow_discharge", True)):
+                continue
+            limit = getattr(coordinator, "effective_max_discharge_power",
+                            getattr(coordinator, "max_discharge_power", 1.0))
+            try:
+                limit = float(limit)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(limit) or limit <= 0:
+                continue
             snapshots.append(
                 BatterySnapshot(
                     name=getattr(coordinator, "name", "battery"),
@@ -339,7 +354,8 @@ class DischargeReserveManager:
                     capacity_kwh=capacity,
                     max_soc_pct=max_soc,
                     floor_soc_pct=floor,
-                    max_discharge_power_w=0.0,
+                    max_discharge_power_w=limit,
+                    discharge_efficiency=battery_energy_model(coordinator).discharge_efficiency,
                     eligible=True,
                     can_discharge=True,
                 )
@@ -424,6 +440,7 @@ class DischargeReserveManager:
             0.0, float(getattr(self._controller, "max_charge_capacity", 0.0) or 0.0)
         )
         hold_state = self._hold_plan_state(now)
+        efficiency = future_charge_efficiency(self._controller)
         surplus: dict = {}
         for slot in consumption:
             raw_kwh = max(
@@ -440,7 +457,7 @@ class DischargeReserveManager:
                     # exported than stored. Crediting it would release the
                     # reserve against kWh that are never going to arrive.
                     absorbed_kwh = 0.0
-            surplus[slot] = SURPLUS_CREDIT_FACTOR * absorbed_kwh * CHARGE_EFFICIENCY
+            surplus[slot] = SURPLUS_CREDIT_FACTOR * absorbed_kwh * efficiency
         return net_demand_by_slot(consumption, solar), surplus
 
     def _hold_plan_state(self, now: datetime) -> tuple[set, set] | None:
@@ -535,6 +552,7 @@ class DischargeReserveManager:
                     "plan_status": plan.status,
                     "reserve_kwh": round(plan.reserve_kwh, 3),
                     "usable_energy_kwh": round(plan.usable_energy_kwh, 3),
+                    "discharge_efficiency": plan.discharge_efficiency,
                     "free_space_kwh": round(plan.free_space_kwh, 3),
                     "total_capacity_kwh": round(plan.total_capacity_kwh, 3),
                     "min_saving": plan.min_saving,

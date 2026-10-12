@@ -76,6 +76,7 @@ class AbsorptionSlot:
     export_price: float
     expected_surplus_kwh: float = 0.0
     selected: bool = False
+    charge_efficiency: float = CHARGE_EFFICIENCY
 
     @property
     def duration_hours(self) -> float:
@@ -84,7 +85,7 @@ class AbsorptionSlot:
     @property
     def absorbable_kwh(self) -> float:
         """Battery-side energy this slot can absorb, after charge losses."""
-        return max(0.0, self.expected_surplus_kwh) * CHARGE_EFFICIENCY
+        return max(0.0, self.expected_surplus_kwh) * self.charge_efficiency
 
     def contains(self, moment: datetime) -> bool:
         return instant(self.start) <= instant(moment) < instant(self.end)
@@ -134,6 +135,7 @@ def calculate_absorption_target_kwh(
     usable_energy_kwh: float | None,
     free_space_kwh: float | None,
     safety_margin_kwh: float = 0.0,
+    *, discharge_efficiency: float = 1.0,
 ) -> float | None:
     """Return the battery-side energy still worth absorbing today.
 
@@ -150,11 +152,12 @@ def calculate_absorption_target_kwh(
         _finite(remaining_consumption_kwh)
         and _finite(usable_energy_kwh)
         and _finite(free_space_kwh)
+        and _finite(discharge_efficiency) and 0 < float(discharge_efficiency) <= 1
     ):
         return None
     margin = float(safety_margin_kwh) if _finite(safety_margin_kwh) else 0.0
     space = max(0.0, float(free_space_kwh))
-    needed = float(remaining_consumption_kwh) + max(0.0, margin) - float(usable_energy_kwh)
+    needed = (float(remaining_consumption_kwh) + max(0.0, margin)) / float(discharge_efficiency) - float(usable_energy_kwh)
     return max(0.0, min(needed, space))
 
 
@@ -192,6 +195,8 @@ def calculate_usable_energy_kwh(batteries: Sequence[BatterySnapshot]) -> float:
 def _usable_battery(snapshot: BatterySnapshot) -> bool:
     return (
         getattr(snapshot, "eligible", False)
+        and getattr(snapshot, "can_discharge", False)
+        and _finite(snapshot.max_discharge_power_w) and snapshot.max_discharge_power_w > 0
         and _finite(snapshot.soc_pct)
         and _finite(snapshot.capacity_kwh)
         and _finite(snapshot.max_soc_pct)
@@ -239,6 +244,8 @@ def plan_surplus_absorption(
     usable_energy_kwh: float | None = None,
     safety_margin_kwh: float = 0.0,
     max_charge_power_w: float | None = None,
+    charge_efficiency: float = CHARGE_EFFICIENCY,
+    discharge_efficiency: float = 1.0,
     deadline: datetime | None = None,
     min_saving: float = 0.0,
     now: datetime | None = None,
@@ -253,6 +260,11 @@ def plan_surplus_absorption(
     evaluated_at = now or datetime.now()
     plan = AbsorptionPlan(evaluation_time=evaluated_at, deadline=deadline)
     plan.min_saving = max(0.0, float(min_saving)) if _finite(min_saving) else 0.0
+
+    if not _finite(charge_efficiency) or not 0 < float(charge_efficiency) <= 1:
+        plan.status, plan.reason = STATUS_FAIL_SAFE, "invalid_charge_efficiency"
+        return plan
+    charge_efficiency = float(charge_efficiency)
 
     if not price_slots:
         plan.status, plan.reason = STATUS_FAIL_SAFE, "missing_prices"
@@ -301,6 +313,7 @@ def plan_surplus_absorption(
                 end=slot.end,
                 export_price=float(slot.price),
                 expected_surplus_kwh=capped,
+                charge_efficiency=charge_efficiency,
             )
         )
     plan.slots = absorption_slots
@@ -313,6 +326,7 @@ def plan_surplus_absorption(
         usable_energy_kwh,
         free_space_kwh,
         safety_margin_kwh,
+        discharge_efficiency=discharge_efficiency,
     )
     if target_kwh is None:
         plan.status, plan.reason = STATUS_FAIL_SAFE, "missing_energy_forecast"
@@ -333,6 +347,7 @@ def plan_surplus_absorption(
                 end=slot.end,
                 export_price=slot.export_price,
                 expected_surplus_kwh=slot.expected_surplus_kwh,
+                charge_efficiency=slot.charge_efficiency,
                 selected=slot.absorbable_kwh > EPSILON,
             )
             for slot in absorption_slots
@@ -353,6 +368,7 @@ def plan_surplus_absorption(
             end=slot.end,
             export_price=slot.export_price,
             expected_surplus_kwh=slot.expected_surplus_kwh,
+            charge_efficiency=slot.charge_efficiency,
             selected=(slot.start, slot.end) in chosen,
         )
         for slot in absorption_slots

@@ -52,3 +52,34 @@ Allocation floors each share to 5 W, then assigns affordable increments by large
 remainder. Individual ceilings and the aggregate request are enforced after
 rounding. A small unallocatable remainder is left unused rather than exceeding a
 limit. The existing phase-protection pass can further reduce this allocation.
+
+## Battery energy models
+
+Driver capabilities now carry explicit directional efficiencies and charge/discharge activation crossovers. Existing drivers retain documented assumptions (0.85 each direction, 1750 W charge and 1500 W discharge crossovers); these are not claims of measured performance. Round-trip efficiency is the product of the two directions, and the user arbitrage cost setting remains independent.
+
+Charge completion estimates and allocation weights account for AC-to-DC losses. Chronological charging uses the lowest eligible charge efficiency so switching between batteries cannot overstate stored energy. Export planning uses discharge efficiency, never the round-trip cost knob. Diagnostics expose the selected model and its provenance.
+
+Drivers may optionally supply `EfficiencyMeasurement` records under `efficiency_measurements["charge"|"discharge"]`: paired energy over the same isolated converter, at least 30 samples, 300 seconds and 0.05 kWh input, with a finite ratio from 0.5 to 1 and an aware observation timestamp no older than one day. PV-contaminated, stale or invalid measurements leave the driver's defaults in place. Current drivers do not claim measurements they cannot independently observe.
+
+The charging model is also used when calculating legacy fallback durations, charge-delay completion time, dashboard fallback quotas and quota carry-over. An already-started replacement slot is credited only for its remaining elapsed duration. Model reads inspect non-responsive exclusions without resetting retry state, using battery identity rather than display names.
+
+Solar reserve and absorption calculations keep forecast demand on the AC side
+and convert claims into required stored energy using the participating fleet’s
+discharge efficiency. Live SOC targets recompute that conversion; 3 kWh of AC
+demand requires 5 kWh stored at 60% discharge efficiency. Directional loss
+assumptions are separate from configured round-trip price-arbitrage costs.
+
+Predictive scalar deficits and chronological deadlines also account for
+discharge losses. Simultaneous solar serves household load directly; only the
+net surplus crosses the charge converter and only net demand crosses the
+discharge converter. Plans retain the original AC intervals for dashboard
+simulation separately from stored-energy intervals used for scheduling.
+
+Charge-delay balances convert stored capacity to deliverable AC energy and net
+solar production to stored energy, including unlock-time projections. Scalar
+charge-delay and predictive totals use separated-flow losses because morning load and afternoon
+PV cannot be assumed to coincide; dated chronological intervals can net flows. Curtailment
+slot quotas remain AC output while SOC targets describe stored depletion.
+For mixed fleets, headroom planning uses the highest participating discharge
+efficiency: this is the conservative bound on stored depletion for a given AC
+output, whereas demand reserves use the lowest efficiency.

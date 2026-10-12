@@ -50,7 +50,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 
 ### 7. Model battery-specific efficiency and activation crossovers
 
-- Status: planned
+- Status: completed (implementation PR linked from the issue)
 - Issue: [7](https://github.com/thomasvt1/Omnibattery/issues/7)
 - Scope: Introduce validated per-driver energy model defaults and optional measured efficiency evidence, separate charge/discharge/round-trip semantics, and consume battery-specific crossover thresholds in fleet selection.
 - Acceptance: Mixed fleets can expose distinct energy models; invalid measurements fall back safely; planning uses directional efficiencies without confusing round-trip values; legacy defaults remain explicit.

@@ -62,6 +62,7 @@ class EnergySimulationResult:
 @dataclass
 class ChronologicalPlan:
     intervals: list[EnergyInterval] = field(default_factory=list)
+    ac_intervals: tuple[EnergyInterval, ...] | None = None
     deadlines: list[EnergyDeadline] = field(default_factory=list)
     allocations: list[SlotAllocation] = field(default_factory=list)
     total_required_kwh: float = 0.0
@@ -83,6 +84,8 @@ class ChronologicalEvaluationRequest:
     from its mutable decision dictionary.  Callers that need live forecasts
     adapt them before constructing this value; visual projections can use the
     same evaluator without gaining any path to runtime control state.
+    Intervals contain AC-side forecasts; deadlines, quotas and initial energy
+    are stored battery-side kWh.
     """
 
     now: datetime
@@ -95,9 +98,15 @@ class ChronologicalEvaluationRequest:
     usable_initial_kwh: float = 0.0
     max_price_threshold: float | None = None
     deadlines: tuple[EnergyDeadline, ...] = ()
+    charge_efficiency: float = CHARGE_EFFICIENCY
+    discharge_efficiency: float = 1.0
 
     def __post_init__(self) -> None:
-        if self.horizon_end <= self.now:
+        if not math.isfinite(self.charge_efficiency) or not 0 < self.charge_efficiency <= 1:
+            raise ValueError("charge efficiency must be finite and within (0, 1]")
+        if not math.isfinite(self.discharge_efficiency) or not 0 < self.discharge_efficiency <= 1:
+            raise ValueError("discharge efficiency must be finite and within (0, 1]")
+        if instant(self.horizon_end) <= instant(self.now):
             raise ValueError("chronological horizon must end after now")
         # Accept ordinary sequences at the public boundary but retain only
         # immutable containers while the evaluator is running.
@@ -464,6 +473,17 @@ def allocate_price_slots(
     )
 
 
+def stored_energy_intervals(intervals, charge_efficiency, discharge_efficiency):
+    """Convert net AC flows once; simultaneous PV serves the house directly."""
+    if any(not math.isfinite(v) or not 0 < v <= 1
+           for v in (charge_efficiency, discharge_efficiency)):
+        raise ValueError("invalid directional efficiency")
+    return tuple(EnergyInterval(item.start, item.end,
+        max(0.0, item.consumption_kwh - item.solar_kwh) / discharge_efficiency,
+        max(0.0, item.solar_kwh - item.consumption_kwh) * charge_efficiency)
+        for item in intervals)
+
+
 def evaluate_chronological_request(
     request: ChronologicalEvaluationRequest,
 ) -> ChronologicalEvaluationResult:
@@ -474,7 +494,8 @@ def evaluate_chronological_request(
     derived from the supplied intervals.  No input collection, controller
     access or diagnostics persistence happens in this function.
     """
-    intervals = tuple(request.intervals)
+    intervals = stored_energy_intervals(request.intervals, request.charge_efficiency,
+                                        request.discharge_efficiency)
     usable_capacity = request.usable_initial_kwh + request.headroom_kwh
     depletion_deadlines = tuple(
         build_energy_deadlines(
@@ -495,7 +516,9 @@ def evaluate_chronological_request(
         headroom_kwh=request.headroom_kwh,
         usable_initial_kwh=request.usable_initial_kwh,
         max_price_threshold=request.max_price_threshold,
+        charge_efficiency=request.charge_efficiency,
     )
+    plan.ac_intervals = tuple(request.intervals)
     return ChronologicalEvaluationResult(
         plan=plan,
         diagnostics=ChronologicalDiagnostics(

@@ -71,19 +71,19 @@ def _run(ctrl):
 
 
 def test_weekly_day_charges_the_gap_the_sun_cannot_cover():
-    # Solar 5.0 - consumption 2.0 = 3.0 kWh surplus into the pack.
-    # Weekly needs 5.0 kWh → grid buys the remaining 2.0 kWh.
+    # Scalar timing is unknown: solar stores 5*.85 while demand removes 2/.85.
+    # Weekly needs the remainder of its 5 kWh stored-energy gap.
     result = _run(_ctrl([_Coord(50.0, 10.0)], weekly=True, solar="5.0"))
 
     assert result["should_charge"] is True
-    assert abs(result["energy_deficit_kwh"] - 2.0) < 0.05
+    assert result["energy_deficit_kwh"] == pytest.approx(5 - (5*.85 - 2/.85))
     assert result["weekly_full_charge_active"] is True
     assert "Weekly full charge" in result["reason"]
 
 
 def test_weekly_day_buys_nothing_when_solar_covers_the_gap():
-    # Solar 8.0 - consumption 2.0 = 6.0 kWh surplus ≥ the 5.0 kWh gap.
-    result = _run(_ctrl([_Coord(50.0, 10.0)], weekly=True, solar="8.0"))
+    # Solar stores 9*.85 and demand removes 2/.85: more than the 5 kWh gap.
+    result = _run(_ctrl([_Coord(50.0, 10.0)], weekly=True, solar="9.0"))
 
     assert result["should_charge"] is False
 
@@ -143,7 +143,7 @@ def test_weekly_reserve_survives_a_fully_covering_solar_forecast():
     """A covering solar forecast must not erase the weekly fallback reserve."""
     now = datetime(2026, 9, 21, 0, 5)
     coord = _Coord(50.0, 10.0)
-    ctrl = _ctrl([coord], weekly=True, solar="8.0", consumption=2.0)
+    ctrl = _ctrl([coord], weekly=True, solar="9.0", consumption=2.0)
     weekly = _run(ctrl)
     forecast = SimpleNamespace(
         energy_kwh=2.0,
@@ -187,7 +187,7 @@ def test_weekly_reserve_survives_a_fully_covering_solar_forecast():
         diagnostic_only=True,
     )
     ctrl._weekly_charge_mgr = SimpleNamespace(is_active=lambda: False)
-    ordinary = _run(_ctrl([coord], weekly=False, solar="8.0", consumption=2.0))
+    ordinary = _run(_ctrl([coord], weekly=False, solar="9.0", consumption=2.0))
     manager._build_chronological_plan(
         now=now,
         slots=[],
@@ -213,7 +213,7 @@ def test_weekly_schedule_reserves_only_post_solar_slots(monkeypatch):
 
     monkeypatch.setattr(pricing_engine, "datetime", FixedDateTime)
     monkeypatch.setattr(pricing_engine.calculations, "datetime", FixedDateTime)
-    ctrl = _ctrl([_Coord(50.0, 10.0)], weekly=True, solar="8.0")
+    ctrl = _ctrl([_Coord(50.0, 10.0)], weekly=True, solar="9.0")
     decision = _run(ctrl)
 
     async def should_activate():

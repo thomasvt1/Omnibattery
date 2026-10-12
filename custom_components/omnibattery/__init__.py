@@ -1900,6 +1900,7 @@ class ChargeDischargeController:
     def _daily_operation_battery_inputs(self) -> list[Any]:
         """Return safe battery snapshots for the pure future projection."""
         from .pricing.daily_timeline import BatteryProjectionInput
+        from .energy_model import battery_energy_model
 
         result = []
         for index, coordinator in enumerate(getattr(self, "coordinators", ())):
@@ -1919,6 +1920,7 @@ class ChargeDischargeController:
                 or data.get("max_discharge_power"),
                 0.0,
             )
+            model = battery_energy_model(coordinator)
             result.append(
                 BatteryProjectionInput(
                     key=str(getattr(coordinator, "name", None) or f"battery_{index}"),
@@ -1930,6 +1932,8 @@ class ChargeDischargeController:
                     max_soc_pct=self._daily_operation_float(
                         getattr(coordinator, "max_soc", 100.0), 100.0
                     ),
+                    charge_efficiency=model.charge_efficiency,
+                    discharge_efficiency=model.discharge_efficiency,
                     charge_power_w=max(0.0, charge_limit),
                     discharge_power_w=max(0.0, discharge_limit),
                     can_charge=not manual_owned,
@@ -1947,7 +1951,7 @@ class ChargeDischargeController:
 
     def _daily_operation_build_projection(self, now: datetime) -> dict[str, Any] | None:
         """Build the dashboard projection from the existing authoritative planner."""
-        from .const import CHARGE_EFFICIENCY
+        from .energy_model import future_charge_efficiency
         from .pricing import PriceSlot
         from .pricing.chronological import SlotAllocation
         from .tracking.daily_projection import (
@@ -2094,7 +2098,7 @@ class ChargeDischargeController:
                         )
                         / 1000.0
                         * duration_h
-                        * CHARGE_EFFICIENCY
+                        * future_charge_efficiency(self)
                     )
                 if target > 0.0:
                     allocations.append(
@@ -2186,7 +2190,11 @@ class ChargeDischargeController:
         return build_daily_operation_projection(
             DailyOperationProjectionRequest(
                 now=now,
-                plan_intervals=tuple(getattr(plan, "intervals", ()) or ()),
+                plan_intervals=tuple(
+                    getattr(plan, "ac_intervals", None)
+                    if getattr(plan, "ac_intervals", None) is not None
+                    else (getattr(plan, "intervals", ()) or ())
+                ),
                 allocations=tuple(allocations),
                 battery_inputs=tuple(battery_inputs),
                 mode=mode,
@@ -5090,6 +5098,9 @@ class ChargeDischargeController:
             )
             for c in coordinators_with_data
         )
+        from .energy_model import future_charge_efficiency, future_discharge_efficiency
+        discharge_efficiency = future_discharge_efficiency(self, coordinators_with_data)
+        charge_efficiency = future_charge_efficiency(self, coordinators_with_data)
         effective_min_soc = min_soc  # Actual hardware cutoff, no safety margin
 
         # Safety margin: user-configurable buffer added to consumption forecast.
@@ -5268,11 +5279,11 @@ class ChargeDischargeController:
                 capture(solar_forecast_kwh)
         if solar_forecast_kwh is None:
             # Conservative mode: assume zero solar, compare usable vs consumption
-            total_available_kwh = usable_energy_kwh
+            total_available_kwh = usable_energy_kwh * discharge_efficiency
             # No forecast means no expected surplus, so the weekly gap enters
             # whole - consistent with this branch assuming zero solar.
             energy_deficit_kwh = max(
-                avg_consumption_kwh - total_available_kwh,
+                (avg_consumption_kwh - total_available_kwh) / discharge_efficiency,
                 floor_deficit_kwh,
                 weekly_gap_kwh,
             )
@@ -5305,6 +5316,8 @@ class ChargeDischargeController:
                 "solar_available_to_battery_kwh": 0.0,
                 "stored_energy_kwh": stored_energy_kwh,
                 "usable_energy_kwh": usable_energy_kwh,
+                "discharge_efficiency": discharge_efficiency,
+                "delivered_usable_energy_kwh": usable_energy_kwh * discharge_efficiency,
                 "cutoff_energy_kwh": cutoff_energy_kwh,
                 "effective_min_soc": effective_min_soc,
                 "avg_soc": avg_soc,
@@ -5353,7 +5366,7 @@ class ChargeDischargeController:
                 # branch below.
                 "floor_active": (
                     floor_deficit_kwh > 0
-                    and floor_deficit_kwh > avg_consumption_kwh - total_available_kwh
+                    and floor_deficit_kwh > (avg_consumption_kwh - total_available_kwh) / discharge_efficiency
                 ),
                 "reason": f"Solar unavailable - conservative mode ({'charge' if should_charge else 'safe'})"
             }
@@ -5374,15 +5387,19 @@ class ChargeDischargeController:
             claim_request_kwh = external_loads.claimable_solar_demand_kwh() or 0.0
         excluded_demand_claim_kwh = min(max(0.0, claim_request_kwh), solar_remaining_effective_kwh)
         solar_available_to_battery_kwh = solar_remaining_effective_kwh - excluded_demand_claim_kwh
-        total_available_kwh = usable_energy_kwh + solar_available_to_battery_kwh
-        base_deficit_kwh = avg_consumption_kwh - total_available_kwh
+        # Scalar totals cannot prove PV coincides with household demand.
+        # Credit solar through both conversions; dated timeline intervals can
+        # still serve simultaneous demand directly without those losses.
+        total_available_kwh = (usable_energy_kwh * discharge_efficiency
+                               + solar_available_to_battery_kwh * charge_efficiency * discharge_efficiency)
+        base_deficit_kwh = (avg_consumption_kwh - total_available_kwh) / discharge_efficiency
         # Only the solar left over after the house is served can fill the pack,
         # so the weekly cycle buys the rest of its gap and no more. Energy
         # already stored does not count: it is below the gap, not inside it.
         weekly_deficit_kwh = max(
             0.0,
             weekly_gap_kwh
-            - max(0.0, solar_available_to_battery_kwh - avg_consumption_kwh),
+            - max(0.0, solar_available_to_battery_kwh * charge_efficiency - avg_consumption_kwh / discharge_efficiency),
         )
         energy_deficit_kwh = max(base_deficit_kwh, floor_deficit_kwh, weekly_deficit_kwh)
         should_charge = energy_deficit_kwh > 0
@@ -5446,6 +5463,8 @@ class ChargeDischargeController:
             "solar_available_to_battery_kwh": round(solar_available_to_battery_kwh, 3),
             "stored_energy_kwh": stored_energy_kwh,
             "usable_energy_kwh": usable_energy_kwh,
+                "discharge_efficiency": discharge_efficiency,
+                "delivered_usable_energy_kwh": usable_energy_kwh * discharge_efficiency,
             "cutoff_energy_kwh": cutoff_energy_kwh,
             "effective_min_soc": effective_min_soc,
             "avg_soc": avg_soc,

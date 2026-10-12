@@ -23,6 +23,8 @@ import math
 import time
 from typing import TYPE_CHECKING, Any
 
+from ..energy_model import battery_energy_model
+
 from ..const import (
     MULTI_BATTERY_CHARGE_CROSSOVER_W,
     MULTI_BATTERY_DISCHARGE_CROSSOVER_W,
@@ -271,10 +273,9 @@ class PowerDistribution:
             is_charging,
         )
 
-        crossover_w = (
-            MULTI_BATTERY_CHARGE_CROSSOVER_W if is_charging
-            else MULTI_BATTERY_DISCHARGE_CROSSOVER_W
-        )
+        def crossover(battery):
+            model = battery_energy_model(battery)
+            return model.charge_crossover_w if is_charging else model.discharge_crossover_w
         activation_threshold = MULTI_BATTERY_MIN_ACTIVATION  # updated per step in loop
         previous_active = (
             self._controller._active_charge_batteries if is_charging
@@ -306,7 +307,7 @@ class PowerDistribution:
             combined_capacity += limit
             activation_threshold = max(
                 MULTI_BATTERY_MIN_ACTIVATION,
-                min(MULTI_BATTERY_MAX_ACTIVATION, crossover_w / limit)
+                min(MULTI_BATTERY_MAX_ACTIVATION, crossover(battery) / limit)
             )
             if total_power <= combined_capacity * activation_threshold:
                 break
@@ -321,11 +322,10 @@ class PowerDistribution:
                     limit = self._controller._battery_power_limit(battery, is_charging)
                     if limit <= 0:
                         continue
-                    first_limit = (
-                        self._controller._battery_power_limit(selected[0], is_charging)
-                    ) if selected else limit
+                    boundary = selected[-1] if selected else battery
+                    boundary_limit = self._controller._battery_power_limit(boundary, is_charging)
                     act_thr = max(MULTI_BATTERY_MIN_ACTIVATION,
-                                  min(MULTI_BATTERY_MAX_ACTIVATION, crossover_w / first_limit))
+                                  min(MULTI_BATTERY_MAX_ACTIVATION, crossover(boundary) / boundary_limit))
                     deact_thr = max(MULTI_BATTERY_MIN_ACTIVATION, act_thr - MULTI_BATTERY_HYSTERESIS_GAP)
                     if total_power > combined_capacity * deact_thr:
                         selected.append(battery)
@@ -343,7 +343,7 @@ class PowerDistribution:
                     prev_limit = self._controller._battery_power_limit(selected[-2], is_charging)
                     act_thr_with_hyst = min(
                         max(MULTI_BATTERY_MIN_ACTIVATION,
-                            min(MULTI_BATTERY_MAX_ACTIVATION, crossover_w / prev_limit))
+                            min(MULTI_BATTERY_MAX_ACTIVATION, crossover(selected[-2]) / prev_limit))
                         + MULTI_BATTERY_HYSTERESIS_GAP,
                         MULTI_BATTERY_MAX_ACTIVATION,
                     )

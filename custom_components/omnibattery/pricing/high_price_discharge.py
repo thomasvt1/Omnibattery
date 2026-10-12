@@ -178,7 +178,7 @@ class _LedgerEntry:
     import_price: float | None
 
 
-def _valid_battery(snapshot: BatterySnapshot) -> bool:
+def valid_discharge_battery(snapshot: BatterySnapshot) -> bool:
     """A battery that cannot discharge or reports bad data sells nothing.
 
     Never averaged into the aggregate: an ineligible battery's floor and
@@ -192,7 +192,7 @@ def _valid_battery(snapshot: BatterySnapshot) -> bool:
         and _finite(snapshot.floor_soc_pct)
         and _finite(snapshot.max_discharge_power_w)
         and snapshot.capacity_kwh > 0
-        and snapshot.max_discharge_power_w >= 0
+        and snapshot.max_discharge_power_w > 0
     )
 
 
@@ -355,6 +355,8 @@ def plan_high_price_discharge(
     additional_cost_per_kwh: float = 0.0,
     max_export_power_w: float | None = None,
     discharge_efficiency: float = 1.0,
+    charge_efficiency: float = 1.0,
+    round_trip_efficiency: float | None = None,
     safety_margin_kwh: float = 0.0,
     fill_slots: Sequence[HorizonSlot] = (),
     chronological_coverage: bool = True,
@@ -418,7 +420,10 @@ def plan_high_price_discharge(
         )
     ceiling_w = float(max_export_power_w) if max_export_power_w is not None else math.inf
 
-    if not _finite(discharge_efficiency) or float(discharge_efficiency) <= 0:
+    cost_efficiency = discharge_efficiency if round_trip_efficiency is None else round_trip_efficiency
+    if (not _finite(discharge_efficiency) or not 0 < float(discharge_efficiency) <= 1
+            or not _finite(charge_efficiency) or not 0 < float(charge_efficiency) <= 1
+            or not _finite(cost_efficiency) or not 0 < float(cost_efficiency) <= 1):
         return HighPriceDischargePlan(
             status=STATUS_FAIL_SAFE,
             reason=REASON_INVALID_CONFIGURATION,
@@ -466,7 +471,7 @@ def plan_high_price_discharge(
         max(0.0, slot.consumption_kwh - slot.solar_kwh) for slot in working[priced_end:]
     )
 
-    valid_batteries = [battery for battery in batteries if _valid_battery(battery)]
+    valid_batteries = [battery for battery in batteries if valid_discharge_battery(battery)]
     usable_energy_kwh = sum(
         max(0.0, (battery.soc_pct - battery.floor_soc_pct) / 100.0 * battery.capacity_kwh)
         * efficiency
@@ -498,13 +503,13 @@ def plan_high_price_discharge(
             refill_price = _solar_refill_price(
                 fill_slots, horizon_end,
                 max(0.0, usable_energy_kwh - protected_demand_kwh - budget),
-                full_level, efficiency,
+                full_level, float(charge_efficiency) * efficiency,
             )
             if refill_price is None:
                 trigger_1_reason = REASON_NO_REFILL_PRICE
             else:
                 trigger_1_reason = REASON_NO_ELIGIBLE_CANDIDATES
-                threshold = refill_price / efficiency + additional_cost
+                threshold = refill_price / float(cost_efficiency) + additional_cost
                 budget_left = budget
                 ranked = sorted(
                     (slot for slot in working if _finite(slot.export_price)

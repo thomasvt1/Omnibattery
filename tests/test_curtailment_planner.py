@@ -435,3 +435,45 @@ def test_missing_inputs_fail_safe(kwargs, reason):
     assert plan.status == "fail_safe"
     assert plan.reason == reason
     assert plan.selected_discharge_slots == []
+
+
+def test_modeled_charge_efficiency_sets_solar_headroom():
+    slots = [_slot(8, .3), _slot(10, -.01)]
+    plan = plan_curtailment(slots, 2, 0, [_battery(soc=95)],
+        charge_power_w=2000, charge_efficiency=.6, max_export_power_w=2000,
+        solar_by_slot={slots[0]:0, slots[1]:2}, consumption_by_slot={s:0 for s in slots}, now=DAY)
+    assert plan.required_headroom_kwh == pytest.approx(1.2)
+
+
+def test_predischarge_ac_quota_and_stored_soc_depletion_are_distinct():
+    before, risk = _slot(8, .3), _slot(9, -.1)
+    plan = plan_curtailment(
+        [before, risk], 5, 3, [_battery(soc=100, power=5000)],
+        solar_by_slot={before: 0, risk: 5},
+        consumption_by_slot={before: 3, risk: 0},
+        charge_power_w=5000, charge_efficiency=1, discharge_efficiency=.6,
+        now=DAY,
+    )
+    assert plan.planned_discharge_kwh == pytest.approx(5)
+    assert plan.shortfall_kwh == 0
+    assert plan.target_soc_by_battery["battery-1"] == pytest.approx(50)
+    assert sum(s.planned_energy_kwh for s in plan.selected_discharge_slots) == pytest.approx(3)
+    assert plan.selected_discharge_slots[0].power_w == pytest.approx(3000)
+
+
+def test_mixed_headroom_uses_maximum_discharge_efficiency():
+    from dataclasses import replace
+    before, risk = _slot(8, .3), _slot(9, -.1)
+    batteries = [
+        replace(_battery(name="a", soc=100, power=5000), discharge_efficiency=.6),
+        replace(_battery(name="b", soc=100, power=5000), discharge_efficiency=.9),
+    ]
+    plan = plan_curtailment(
+        [before, risk], 5, 3, batteries,
+        solar_by_slot={before: 0, risk: 5},
+        consumption_by_slot={before: 3, risk: 0},
+        charge_power_w=5000, charge_efficiency=1, now=DAY,
+    )
+    # Three AC kWh guarantee only 3/.9 stored kWh depletion for this fleet.
+    assert plan.planned_discharge_kwh == pytest.approx(3/.9)
+    assert plan.shortfall_kwh == pytest.approx(5 - 3/.9)

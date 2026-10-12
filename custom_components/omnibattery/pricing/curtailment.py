@@ -94,6 +94,7 @@ class BatterySnapshot:
     max_discharge_power_w: float
     eligible: bool = True
     can_discharge: bool = True
+    discharge_efficiency: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -423,6 +424,8 @@ def plan_curtailment(
     predischarge_reserve_soc: float = 0.0,
     headroom_margin_kwh: float = 0.0,
     charge_power_w: float | None = None,
+    charge_efficiency: float = CHARGE_EFFICIENCY,
+    discharge_efficiency: float | None = None,
     max_export_power_w: float | None = 0.0,
     export_mode: str | None = None,
     solar_fraction_fn: Callable[[float], float] | None = None,
@@ -437,6 +440,25 @@ def plan_curtailment(
     """Build an anti-curtailment plan from normalized prices and live capacity."""
     evaluated_at = now or datetime.now()
     plan = CurtailmentPlan(evaluation_time=evaluated_at)
+
+    if not _finite(charge_efficiency) or not 0 < float(charge_efficiency) <= 1:
+        plan.status, plan.reason = "fail_safe", "invalid_charge_efficiency"
+        return plan
+    charge_efficiency = float(charge_efficiency)
+    if discharge_efficiency is None:
+        # Headroom is a minimum depletion target: the most efficient possible
+        # discharge needs the greatest AC output to remove that stored energy.
+        discharge_efficiency = max(
+            (float(b.discharge_efficiency) for b in batteries
+             if not _invalid_battery(b) and b.can_discharge
+             and b.max_discharge_power_w > EPSILON
+             and _finite(b.discharge_efficiency) and 0 < b.discharge_efficiency <= 1),
+            default=1.0,
+        )
+    if not _finite(discharge_efficiency) or not 0 < float(discharge_efficiency) <= 1:
+        plan.status, plan.reason = "fail_safe", "invalid_discharge_efficiency"
+        return plan
+    discharge_efficiency = float(discharge_efficiency)
 
     normalized_export_mode = normalize_export_mode(export_mode, max_export_power_w)
     try:
@@ -514,7 +536,7 @@ def plan_curtailment(
             slot_reserve = min(
                 surplus,
                 float(charge_power_w) * _duration_hours(slot) / 1000.0,
-            ) * CHARGE_EFFICIENCY
+            ) * charge_efficiency
             reserve_by_slot[slot] = slot_reserve
             required_kwh += slot_reserve
 
@@ -629,7 +651,7 @@ def plan_curtailment(
         available_energy_by_slot[slot] = net_load_energy + deliberate_export
     selected = select_most_valuable_discharge_slots(
         candidates,
-        min(extra_needed, available_discharge_kwh),
+        min(extra_needed, available_discharge_kwh) * discharge_efficiency,
         max_discharge_power_w,
         max_export_power_w=export_limit_w,
         export_mode=normalized_export_mode,
@@ -637,8 +659,9 @@ def plan_curtailment(
     )
     planned_kwh = min(
         min(extra_needed, available_discharge_kwh),
-        sum(slot.planned_energy_kwh for slot in selected),
+        sum(slot.planned_energy_kwh for slot in selected) / discharge_efficiency,
     )
+    # Slot quotas and power are AC output; plan/SOC depletion is stored energy.
     plan.selected_discharge_slots = selected
     plan.planned_discharge_kwh = planned_kwh
     plan.shortfall_kwh = max(0.0, extra_needed - planned_kwh)
@@ -676,3 +699,12 @@ def plan_curtailment(
 
 # Descriptive alias used by callers that prefer the noun-first name.
 build_curtailment_plan = plan_curtailment
+
+
+def snapshot_discharge_efficiency(batteries: Sequence[BatterySnapshot]) -> float:
+    """Stored-energy bound for valid future participants (temporary holds ignored)."""
+    return min((float(b.discharge_efficiency) for b in batteries
+        if b.eligible and b.can_discharge and all(_finite(v) for v in (b.soc_pct, b.capacity_kwh,
+             b.floor_soc_pct, b.max_soc_pct, b.discharge_efficiency, b.max_discharge_power_w))
+        and b.capacity_kwh > 0 and b.max_soc_pct >= b.floor_soc_pct
+        and b.max_discharge_power_w > 0 and 0 < b.discharge_efficiency <= 1), default=1.0)

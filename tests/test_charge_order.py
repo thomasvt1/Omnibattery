@@ -120,8 +120,8 @@ def test_hours_to_full_is_energy_over_power_not_state_of_charge():
     controller = _controller([])
     slow = _battery("Marstek", capacity=15.36, soc=60, limit_w=2500)
     fast = _battery("Huawei", capacity=13.8, soc=40, limit_w=7000, dc_coupled=True)
-    assert time_to_full_h(controller, slow) == pytest.approx(2.458, abs=0.01)
-    assert time_to_full_h(controller, fast) == pytest.approx(1.183, abs=0.01)
+    assert time_to_full_h(controller, slow) == pytest.approx(2.458 / .85, abs=0.01)
+    assert time_to_full_h(controller, fast) == pytest.approx(1.183 / .85, abs=0.01)
     # Lower state of charge, yet done sooner -- which is the whole point.
     assert time_to_full_h(controller, fast) < time_to_full_h(controller, slow)
 

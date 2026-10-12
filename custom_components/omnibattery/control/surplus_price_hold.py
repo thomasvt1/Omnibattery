@@ -25,6 +25,9 @@ open: when in doubt, release.
 """
 from __future__ import annotations
 
+from ..energy_model import future_charge_efficiency
+from ..pricing.curtailment import snapshot_discharge_efficiency
+
 import logging
 from datetime import datetime, timedelta
 from time import monotonic
@@ -253,6 +256,8 @@ class SurplusPriceHoldManager:
                 safety_margin_kwh=float(
                     getattr(controller, "_predictive_safety_margin_kwh", 0.0) or 0.0
                 ),
+                discharge_efficiency=snapshot_discharge_efficiency(snapshots),
+                charge_efficiency=future_charge_efficiency(self._controller),
                 max_charge_power_w=float(
                     getattr(controller, "max_charge_capacity", 0.0) or 0.0
                 ),
@@ -321,6 +326,7 @@ class SurplusPriceHoldManager:
             calculate_usable_energy_kwh(snapshots),
             calculate_free_space_kwh(snapshots),
             float(getattr(self._controller, "_predictive_safety_margin_kwh", 0.0) or 0.0),
+            discharge_efficiency=snapshot_discharge_efficiency(snapshots),
         )
         if self._live_target_kwh is None:
             self._live_target_failed = True
