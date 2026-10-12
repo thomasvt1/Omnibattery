@@ -80,3 +80,14 @@ async def test_ignored_blockers_do_not_bypass_other_blockers():
         ignore_charge_blockers={'price'},force_write=True)
     coord.apply_power.assert_awaited_once_with(0,read_back=True)
     assert ctrl._last_control_decisions[coord.device_key]['reasons']==('charge:ev_pause',)
+
+
+async def test_unknown_owner_cannot_bypass_automatic_ownership_guards():
+    ctrl = _controller()
+    coord = _Coord({})
+    coord.battery_manual_mode_enabled = True
+    assert not await ChargeDischargeController._set_battery_power(
+        ctrl, coord, 500, 0, owner="automatic_typo",
+        force_write=True, bypass_blockers=True)
+    coord.apply_power.assert_not_called()
+    assert "invalid_owner" in ctrl._last_control_decisions[coord.device_key]["reasons"]

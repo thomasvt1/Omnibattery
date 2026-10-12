@@ -57,6 +57,8 @@ def decide_control(inputs: ControlInputs) -> ControlDecision:
     caps = tuple(None if value is None else max(0.0, _number(value) or 0.0)
                  for value in (inputs.charge_cap_w, inputs.discharge_cap_w))
     reasons = []
+    if inputs.requested_owner not in ("automatic", "battery_manual"):
+        reasons.append("invalid_owner")
     if inputs.requested_owner == 'automatic' and inputs.manual_owned:
         reasons.append('manual_owner')
     if not inputs.available:
