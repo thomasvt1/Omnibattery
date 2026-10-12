@@ -962,6 +962,7 @@ async def async_get_config_entry_diagnostics(
         "vacation_learning": vacation,
         "solar_profile": solar_profile,
         "solar_forecast": {
+            "calibration": getattr(controller, "solar_forecast_calibration", {}),
             "freshness": getattr(controller, "solar_forecast_freshness", "unknown"),
             "source": getattr(controller, "solar_forecast_source", None),
             "conversion": getattr(controller, "solar_forecast_conversion", None),
