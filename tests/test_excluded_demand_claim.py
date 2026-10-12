@@ -100,8 +100,8 @@ def test_claim_reduces_total_available_and_creates_a_deficit():
 
     assert result["excluded_demand_claim_kwh"] == pytest.approx(17.0)
     assert result["solar_available_to_battery_kwh"] == pytest.approx(3.0)
-    assert result["total_available_kwh"] == pytest.approx(6.4)
-    assert result["energy_deficit_kwh"] == pytest.approx(1.6 / .85)
+    assert result["total_available_kwh"] == pytest.approx(3.4 + 3 * .85**2)
+    assert result["energy_deficit_kwh"] == pytest.approx((8 - 3.4 - 3 * .85**2) / .85)
     assert result["should_charge"] is True
 
 
@@ -170,8 +170,8 @@ def test_claim_applies_to_the_remaining_horizon_overrides():
 
     assert result["excluded_demand_claim_kwh"] == pytest.approx(4.0)
     assert result["solar_available_to_battery_kwh"] == pytest.approx(2.0)
-    assert result["total_available_kwh"] == pytest.approx(5.4)
-    assert result["should_charge"] is False
+    assert result["total_available_kwh"] == pytest.approx(3.4 + 2 * .85**2)
+    assert result["should_charge"] is True
 
 
 @pytest.mark.parametrize('solar', [None, '0.0'])
@@ -185,3 +185,13 @@ def test_predictive_balance_accounts_for_discharge_losses(solar):
     assert result['energy_deficit_kwh'] == pytest.approx(2.5)
     assert result['planned_grid_charge_kwh'] == pytest.approx(2.5)
     assert result['should_charge']
+
+
+def test_scalar_solar_cannot_erase_a_deficit_when_production_and_load_are_separated():
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
+    ctrl = _ctrl(solar="5", consumption=3, soc=10, with_loads=False)
+    ctrl.coordinators[0].capabilities = SimpleNamespace(energy_model=BatteryEnergyModel(.6, .6))
+    result = _run(ctrl)
+    assert result["total_available_kwh"] == pytest.approx(1.8)
+    assert result["energy_deficit_kwh"] == pytest.approx(2)
+    assert result["should_charge"]

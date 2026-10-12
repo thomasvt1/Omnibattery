@@ -77,7 +77,7 @@ simulation separately from stored-energy intervals used for scheduling.
 
 Charge-delay balances convert stored capacity to deliverable AC energy and net
 solar production to stored energy, including unlock-time projections. Scalar
-charge-delay totals use separated-flow losses because morning load and afternoon
+charge-delay and predictive totals use separated-flow losses because morning load and afternoon
 PV cannot be assumed to coincide; dated chronological intervals can net flows. Curtailment
 slot quotas remain AC output while SOC targets describe stored depletion.
 For mixed fleets, headroom planning uses the highest participating discharge

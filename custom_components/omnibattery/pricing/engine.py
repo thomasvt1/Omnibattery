@@ -4939,8 +4939,10 @@ class PricingManager:
                 weekly_gap_kwh,
                 max(
                     0.0,
-                    (remaining_consumption_kwh - remaining_solar_kwh)
-                    / future_discharge_efficiency(self._controller, coordinators_with_data) - usable_now_kwh,
+                    remaining_consumption_kwh
+                    / future_discharge_efficiency(self._controller, coordinators_with_data)
+                    - remaining_solar_kwh * self._charge_efficiency_bound(coordinators_with_data)
+                    - usable_now_kwh,
                 ),
             ),
         )

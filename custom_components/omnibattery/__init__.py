@@ -5387,7 +5387,11 @@ class ChargeDischargeController:
             claim_request_kwh = external_loads.claimable_solar_demand_kwh() or 0.0
         excluded_demand_claim_kwh = min(max(0.0, claim_request_kwh), solar_remaining_effective_kwh)
         solar_available_to_battery_kwh = solar_remaining_effective_kwh - excluded_demand_claim_kwh
-        total_available_kwh = usable_energy_kwh * discharge_efficiency + solar_available_to_battery_kwh
+        # Scalar totals cannot prove PV coincides with household demand.
+        # Credit solar through both conversions; dated timeline intervals can
+        # still serve simultaneous demand directly without those losses.
+        total_available_kwh = (usable_energy_kwh * discharge_efficiency
+                               + solar_available_to_battery_kwh * charge_efficiency * discharge_efficiency)
         base_deficit_kwh = (avg_consumption_kwh - total_available_kwh) / discharge_efficiency
         # Only the solar left over after the house is served can fill the pack,
         # so the weekly cycle buys the rest of its gap and no more. Energy
@@ -5395,7 +5399,7 @@ class ChargeDischargeController:
         weekly_deficit_kwh = max(
             0.0,
             weekly_gap_kwh
-            - max(0.0, solar_available_to_battery_kwh - avg_consumption_kwh) * charge_efficiency,
+            - max(0.0, solar_available_to_battery_kwh * charge_efficiency - avg_consumption_kwh / discharge_efficiency),
         )
         energy_deficit_kwh = max(base_deficit_kwh, floor_deficit_kwh, weekly_deficit_kwh)
         should_charge = energy_deficit_kwh > 0
