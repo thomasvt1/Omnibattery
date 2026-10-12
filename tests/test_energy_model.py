@@ -171,3 +171,39 @@ def test_absorption_efficiency_excludes_hard_discharge_blocks():
     healthy = BatterySnapshot('healthy',50,10,100,10,2500,True,True,.95)
     blocked = BatterySnapshot('blocked',50,10,100,10,2500,True,False,.6)
     assert snapshot_discharge_efficiency([healthy,blocked]) == .95
+
+
+def test_headroom_bounds_maximum_stored_pv_but_charge_credit_stays_minimum():
+    from custom_components.omnibattery.energy_model import future_charge_efficiency
+    low = battery(BatteryEnergyModel(.6, .8))
+    high = battery(BatteryEnergyModel(.9, .8))
+    ctrl = SimpleNamespace(coordinators=[low, high])
+    assert future_charge_efficiency(ctrl) == .6
+    assert future_charge_efficiency(ctrl, for_headroom=True) == .9
+    high.allow_charge = False
+    assert future_charge_efficiency(ctrl, for_headroom=True) == .6
+
+
+def test_runtime_curtailment_reserves_the_most_efficient_batterys_pv_footprint():
+    from custom_components.omnibattery.pricing.engine import PricingManager
+    from custom_components.omnibattery.pricing.curtailment import BatterySnapshot
+    now = datetime(2026, 10, 12, 8, tzinfo=timezone.utc)
+    slot = PriceSlot(now + timedelta(hours=1), now + timedelta(hours=2), -.1)
+    ctrl = SimpleNamespace(
+        coordinators=[battery(BatteryEnergyModel(.6, .8)), battery(BatteryEnergyModel(.9, .8))],
+        max_charge_capacity=5000, solar_forecast_source="remaining")
+    manager = PricingManager(None, ctrl)
+    manager._smart_predischarge_enabled = lambda: True
+    manager._curtailment_plan_slots = lambda slots, now: slots
+    manager._curtailment_forecast_model = lambda now: (5, lambda hour: max(0, min(1, hour - 9)), 0)
+    manager._curtailment_battery_snapshots = lambda: [
+        BatterySnapshot("a", 50, 10, 100, 10, 2500),
+        BatterySnapshot("b", 50, 10, 100, 10, 2500)]
+    manager._curtailment_operation_blocked_slots = lambda slots: []
+    manager._curtailment_export_settings = lambda: ("self_consumption", 0)
+    manager._update_curtailment_opportunistic_diagnostics = lambda *args: None
+    manager._set_curtailment_runtime = lambda *args: None
+    plan = manager._build_curtailment_plan([slot], now=now)
+    assert plan.status == "protected"
+    assert plan.required_headroom_kwh == pytest.approx(4.5)
+    assert plan.solar_reserve_by_slot[slot] == pytest.approx(4.5)

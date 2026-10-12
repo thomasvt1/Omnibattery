@@ -2100,7 +2100,7 @@ class PricingManager:
                 headroom_margin_kwh=float(
                     getattr(self._controller, "_predictive_safety_margin_kwh", 0.0)
                 ),
-                charge_efficiency=self._charge_efficiency_bound(),
+                charge_efficiency=future_charge_efficiency(self._controller, for_headroom=True),
 
                 charge_power_w=float(getattr(self._controller, "max_charge_capacity", 0.0) or 0.0),
                 max_export_power_w=export_limit_w,
