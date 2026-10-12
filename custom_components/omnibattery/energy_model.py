@@ -77,8 +77,8 @@ def fleet_charge_efficiency(coordinators):
     return min((battery_energy_model(c).charge_efficiency for c in coordinators), default=0.85)
 
 
-def _future_efficiency(controller, batteries=None, *, direction):
-    """Read-only bound for reachable and automatically owned future chargers.
+def _future_efficiency(controller, batteries=None, *, direction, upper=False):
+    """Read-only directional bound for reachable, automatically owned batteries.
 
     Temporary operating pauses and SOC targets do not erase known models.
     """
@@ -106,14 +106,16 @@ def _future_efficiency(controller, batteries=None, *, direction):
         and not getattr(controller, "_is_manual_slot_owned", lambda _: False)(battery)
         and not (peek_excluded(battery) if callable(peek_excluded)
                  else getattr(battery, "name", None) in excluded)]
-    # When no device is reachable, never replace a known lower efficiency
-    # with a more optimistic legacy assumption while capacity is projected.
-    return min((getattr(battery_energy_model(c), direction + "_efficiency")
+    # When no device is reachable, retain the known model bound rather than
+    # substituting a potentially less conservative legacy assumption.
+    bound = max if upper else min
+    return bound((getattr(battery_energy_model(c), direction + "_efficiency")
                 for c in candidates or fallback), default=0.85)
 
 
-def future_charge_efficiency(controller, batteries=None):
-    return _future_efficiency(controller, batteries, direction="charge")
+def future_charge_efficiency(controller, batteries=None, *, for_headroom=False):
+    """Lower stored-charge credit, or upper PV storage footprint for headroom."""
+    return _future_efficiency(controller, batteries, direction="charge", upper=for_headroom)
 
 
 def future_discharge_efficiency(controller, batteries=None):

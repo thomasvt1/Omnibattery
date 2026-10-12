@@ -82,7 +82,9 @@ PV cannot be assumed to coincide; dated chronological intervals can net flows. C
 slot quotas remain AC output while SOC targets describe stored depletion.
 For mixed fleets, headroom planning uses the highest participating discharge
 efficiency: this is the conservative bound on stored depletion for a given AC
-output, whereas demand reserves use the lowest efficiency.
+output, whereas demand reserves use the lowest efficiency. PV headroom also
+uses the highest eligible charge efficiency to cover the maximum stored-energy
+footprint; ordinary grid-charge budgets retain the lowest charge efficiency.
 
 ## Forecast calibration
 
