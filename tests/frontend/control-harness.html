@@ -1,0 +1,31 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Omnibattery control tests</title><style>body {margin:0}</style></head>
+<body><main aria-label="Battery controls"><marstek-venus-panel></marstek-venus-panel></main>
+<script type="module">
+import '../../custom_components/omnibattery/frontend/marstek-panel.js';
+const panel = document.querySelector('marstek-venus-panel');
+const entries = [
+  ['number.kp','pd_controller_kp','0.35',{min:.1,max:2,step:.05}],
+  ['number.kd','pd_controller_kd','0.2',{min:0,max:2,step:.05}],
+  ['switch.no_pd','no_pd_mode','off',{}],
+  ['switch.manual','manual_mode','off',{}],
+  ['select.profile','pd_tuning_profile','Balanced',{options:['Balanced','Fast']}],
+];
+window.calls=[]; window.serviceMode='resolve'; window.pending=[];
+let hass={locale:{language:'en',time_zone:'UTC'},config:{time_zone:'UTC'},themes:{darkMode:true},
+  entities:Object.fromEntries(entries.map(([id,key])=>[id,{entity_id:id,translation_key:key,platform:'omnibattery',device_id:'system'}])),
+  states:Object.fromEntries(entries.map(([id,key,state,attrs])=>[id,{entity_id:id,state,attributes:{friendly_name:key,...attrs}}])),
+  devices:{system:{name:'Test system'}},
+  callApi:async()=>[], callWS:async()=>[],
+  callService(domain,service,data) {
+    calls.push({domain,service,data});
+    if(serviceMode==='reject') return Promise.reject(Error('Permission denied'));
+    if(serviceMode==='pending') return new Promise((resolve,reject)=>pending.push({id:data.entity_id,resolve,reject}));
+    return Promise.resolve();
+  }
+};
+window.setState=(id,state)=>{hass={...hass,states:{...hass.states,[id]:{...hass.states[id],state}}};panel.hass=hass;};
+window.finish=(id,failed=false)=>{const index=pending.findIndex(p=>p.id===id); const [p]=pending.splice(index,1);failed?p.reject(Error('Permission denied')):p.resolve();};
+panel.panel={config:{domain:'omnibattery'}};
+panel.hass=hass;
+window.ready=true;
+</script></body></html>

@@ -2506,6 +2506,7 @@ class MarstekVenusPanel extends HTMLElement {
     for (const [id, icon, label] of TABS) {
       const t = document.createElement("button");
       t.className = "tab";
+      t.setAttribute("aria-label", label);
       t.innerHTML = `<ha-icon icon="${icon}"></ha-icon><span class="tab-label">${label}</span>`;
       t.addEventListener("click", () => this._setView(id));
       this._tabEls[id] = t;

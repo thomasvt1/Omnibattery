@@ -1,0 +1,12 @@
+{
+  "name": "omnibattery-frontend-tests",
+  "private": true,
+  "scripts": {
+    "test:frontend": "node --test tests/frontend/commands.test.mjs",
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.64.0"
+  }
+}

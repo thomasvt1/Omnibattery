@@ -48,25 +48,46 @@ def pytest_configure(config: pytest.Config) -> None:
     pytest_socket.enable_socket()
 
 
+def _requires_home_assistant(item) -> bool:
+    info = getattr(item, "_fixtureinfo", None)
+    pending = list(getattr(info, "argnames", ()))
+    for marker in item.iter_markers("usefixtures"):
+        pending.extend(marker.args)
+    seen = set()
+    requires_hass = item.get_closest_marker("ha") is not None
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        if name == "hass":
+            requires_hass = True
+            break
+        definitions = getattr(info, "name2fixturedefs", {}).get(name, ())
+        if definitions:
+            pending.extend(definitions[-1].argnames)
+    return requires_hass
+
+
+@pytest.hookimpl(tryfirst=True)
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Skip ``hass``-based tests when the HA test plugin is disabled.
+    """Select HA tests by explicit fixture dependencies, independent of plugins.
 
-    The fast unit run uses ``-p no:homeassistant`` (see ``pytest.ini``), which
-    drops the plugin and its ``hass`` fixture. Without this, the integration
-    tests that request ``hass`` would error at setup instead of being skipped.
-    Drop the flag (e.g. ``-o addopts=""``) to actually run them.
+    The HA plugin adds autouse dependencies to every test, so its expanded
+    fixturenames cannot classify tests. Walk only requested fixtures (including
+    usefixtures markers); mark dynamic request.getfixturevalue users with ha.
     """
-    if config.pluginmanager.has_plugin("homeassistant"):
-        return
-
-    skip_no_hass = pytest.mark.skip(
-        reason="needs the HA test plugin; run without -p no:homeassistant"
-    )
+    plugin_loaded = config.pluginmanager.has_plugin("homeassistant")
     for item in items:
-        if "hass" in getattr(item, "fixturenames", ()):
-            item.add_marker(skip_no_hass)
+        requires_hass = _requires_home_assistant(item)
+        if requires_hass:
+            item.add_marker(pytest.mark.ha)
+            if not plugin_loaded:
+                item.add_marker(pytest.mark.skip(
+                    reason='needs the HA test plugin; run pytest -o addopts="" -m ha'
+                ))
 
 
 @pytest.fixture(autouse=True)
