@@ -927,10 +927,10 @@ def _cushion_mgr(forecast):
 
 
 def test_cushion_shortfall_holds_for_cheaper_hour(monkeypatch):
-    # net = 3.39: below the factored 3.9 edge but still above the bare 3.0 need
+    # stored net = (5.45 - 1.46) * .85 = 3.39: below the factored 3.9 edge but still above the bare 3.0 need
     # -> hold for the cheaper hour instead of unlocking into the morning peak.
     _at_hour(monkeypatch, 9)
-    mgr = _cushion_mgr(4.85)
+    mgr = _cushion_mgr(5.45)
     mgr._price_optimal_release_h = lambda now_h, edge_h, charge_h=None: 12.0
     assert mgr._should_delay_charge(80) is True
     assert mgr._controller._charge_delay_status["estimated_unlock_time"] == "12:00"
@@ -939,7 +939,7 @@ def test_cushion_shortfall_holds_for_cheaper_hour(monkeypatch):
 
 def test_cushion_shortfall_unlocks_when_now_is_cheapest(monkeypatch):
     _at_hour(monkeypatch, 9)
-    mgr = _cushion_mgr(4.85)
+    mgr = _cushion_mgr(5.45)
     mgr._price_optimal_release_h = lambda now_h, edge_h, charge_h=None: now_h
     assert mgr._should_delay_charge(80) is False
     assert mgr._controller._charge_delay_status["unlock_reason"] == "energy_balance"
@@ -948,7 +948,7 @@ def test_cushion_shortfall_unlocks_when_now_is_cheapest(monkeypatch):
 def test_cushion_shortfall_unlocks_without_price_data(monkeypatch):
     # No price data -> legacy instant unlock preserved.
     _at_hour(monkeypatch, 9)
-    mgr = _cushion_mgr(4.85)
+    mgr = _cushion_mgr(5.45)
     mgr._price_optimal_release_h = lambda now_h, edge_h, charge_h=None: None
     assert mgr._should_delay_charge(80) is False
     assert mgr._controller._charge_delay_status["unlock_reason"] == "energy_balance"
@@ -970,7 +970,7 @@ def test_cushion_hold_window_never_passes_bare_balance_edge(monkeypatch):
     # The edge handed to the price scorer is the BARE (x1.0) balance crossing,
     # never the factored one, so the hold cannot eat into the target itself.
     _at_hour(monkeypatch, 9)
-    mgr = _cushion_mgr(4.85)
+    mgr = _cushion_mgr(5.45)
     edges = []
     mgr._price_optimal_release_h = lambda now_h, edge_h, charge_h=None: edges.append(edge_h) or now_h
     # Record what the gate actually asked the projection for, so the expected edge
@@ -1077,3 +1077,36 @@ def test_charge_time_still_respects_the_system_power_limit(monkeypatch):
 
     expected = 8.5 / (2.0 * 0.85)
     assert ctrl._charge_delay_status["charge_time_h"] == expected
+
+
+def test_delay_releases_when_stored_energy_cannot_cover_ac_load(monkeypatch):
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
+    _at_hour(monkeypatch, 9)
+    coord = _coord(soc=70, total_energy=10, min_soc=20)
+    coord.capabilities = SimpleNamespace(energy_model=BatteryEnergyModel(.6, .6))
+    ctrl = _controller(coordinators=[coord], _consumption_tracker=_tracker(
+        get_avg_daily_consumption=lambda: 8 * 24 / 15))
+    mgr = _make_mgr(ctrl, states={"sensor.forecast": _state(4)})
+    assert mgr._should_delay_charge(100) is False
+    assert ctrl._charge_delay_status["unlock_reason"] == "low_forecast"
+
+
+def test_delay_solar_surplus_and_unlock_projection_use_stored_energy(monkeypatch):
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
+    _at_hour(monkeypatch, 9)
+    coord = _coord(soc=40, total_energy=10, min_soc=20)
+    coord.capabilities = SimpleNamespace(energy_model=BatteryEnergyModel(.6, .6))
+    ctrl = _controller(coordinators=[coord], _consumption_tracker=_tracker(
+        get_avg_daily_consumption=lambda: 0))
+    mgr = _make_mgr(ctrl, states={"sensor.forecast": _state(7)})
+    assert mgr._should_delay_charge(100) is False
+    assert ctrl._charge_delay_status["net_solar_kwh"] == 4.2
+    assert ctrl._charge_delay_status["unlock_reason"] == "energy_balance"
+    assert mgr._estimate_energy_balance_unlock_h(
+        7, 6, 8, 16, 9, forecast_is_remaining=True,
+        safety_factor=1, charge_efficiency=.6, discharge_efficiency=.6
+    ) == 9
+
+
+def test_negative_net_solar_converts_ac_deficit_to_stored_energy():
+    assert charge_delay_module._stored_net_solar(2, 5, .8, .6) == -5

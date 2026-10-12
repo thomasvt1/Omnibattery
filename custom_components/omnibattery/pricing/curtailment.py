@@ -425,6 +425,7 @@ def plan_curtailment(
     headroom_margin_kwh: float = 0.0,
     charge_power_w: float | None = None,
     charge_efficiency: float = CHARGE_EFFICIENCY,
+    discharge_efficiency: float = 1.0,
     max_export_power_w: float | None = 0.0,
     export_mode: str | None = None,
     solar_fraction_fn: Callable[[float], float] | None = None,
@@ -444,6 +445,10 @@ def plan_curtailment(
         plan.status, plan.reason = "fail_safe", "invalid_charge_efficiency"
         return plan
     charge_efficiency = float(charge_efficiency)
+    if not _finite(discharge_efficiency) or not 0 < float(discharge_efficiency) <= 1:
+        plan.status, plan.reason = "fail_safe", "invalid_discharge_efficiency"
+        return plan
+    discharge_efficiency = float(discharge_efficiency)
 
     normalized_export_mode = normalize_export_mode(export_mode, max_export_power_w)
     try:
@@ -636,7 +641,7 @@ def plan_curtailment(
         available_energy_by_slot[slot] = net_load_energy + deliberate_export
     selected = select_most_valuable_discharge_slots(
         candidates,
-        min(extra_needed, available_discharge_kwh),
+        min(extra_needed, available_discharge_kwh) * discharge_efficiency,
         max_discharge_power_w,
         max_export_power_w=export_limit_w,
         export_mode=normalized_export_mode,
@@ -644,8 +649,9 @@ def plan_curtailment(
     )
     planned_kwh = min(
         min(extra_needed, available_discharge_kwh),
-        sum(slot.planned_energy_kwh for slot in selected),
+        sum(slot.planned_energy_kwh for slot in selected) / discharge_efficiency,
     )
+    # Slot quotas and power are AC output; plan/SOC depletion is stored energy.
     plan.selected_discharge_slots = selected
     plan.planned_discharge_kwh = planned_kwh
     plan.shortfall_kwh = max(0.0, extra_needed - planned_kwh)

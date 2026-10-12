@@ -38,7 +38,8 @@ from ..solar_forecast import (
     get_configured_solar_forecast_sensor,
     read_remaining_solar_kwh,
 )
-from ..energy_model import battery_energy_model, fleet_charge_efficiency
+from ..energy_model import (battery_energy_model, fleet_charge_efficiency,
+    future_charge_efficiency, future_discharge_efficiency)
 from ..pricing.time_math import elapsed, local_time, instant
 
 # Price-aware release only makes sense when charging is actually scheduled by
@@ -163,6 +164,12 @@ def _charge_time_h(
         )
 
     return max(slowest, energy_needed_kwh / (system_kw * fleet_charge_efficiency(batteries)))
+
+
+def _stored_net_solar(solar, consumption, charge_efficiency, discharge_efficiency):
+    """Net simultaneous AC flows before converting the remainder to stored kWh."""
+    net = solar - consumption
+    return net * charge_efficiency if net >= 0 else net / discharge_efficiency
 
 
 class ChargeDelayManager:
@@ -631,6 +638,14 @@ class ChargeDelayManager:
             _LOGGER.info("Charge Delay: Invalid battery capacity - unlocking")
             return _unlock("no_forecast")
 
+        charge_efficiency = future_charge_efficiency(ctrl, automatic_batteries)
+        discharge_efficiency = future_discharge_efficiency(ctrl, automatic_batteries)
+        usable_energy_kwh = sum(
+            max(0.0, (c.data.get("battery_soc", 0) - c.min_soc) / 100.0
+                * c.data.get("battery_total_energy", 0))
+            for c in automatic_batteries if c.data
+        )
+        balance_inputs = (usable_energy_kwh, charge_efficiency, discharge_efficiency, now_h)
         profile_balance = self._profile_forecast_between(
             now_h,
             24.0,
@@ -638,7 +653,8 @@ class ChargeDelayManager:
         profile_source = profile_balance.source if profile_balance is not None else "legacy_daily"
         forecast_source = forecast_origin or forecast.source
         if (
-            ctrl._charge_delay_forecast_cache is None
+            getattr(ctrl, "_charge_delay_energy_inputs", None) != balance_inputs
+            or ctrl._charge_delay_forecast_cache is None
             or abs(forecast_today - ctrl._charge_delay_forecast_cache) > 0.05
             or getattr(ctrl, "_charge_delay_forecast_source_cache", None)
             != forecast_source
@@ -647,14 +663,6 @@ class ChargeDelayManager:
             or getattr(ctrl, "_charge_delay_profile_source_cache", None)
             != profile_source
         ):
-            coordinators_with_data = [c for c in automatic_batteries if c.data]
-            avg_soc = (
-                sum(c.data.get("battery_soc", 0) for c in coordinators_with_data)
-                / len(coordinators_with_data)
-            ) if coordinators_with_data else 0
-            min_soc_values = [c.min_soc for c in automatic_batteries]
-            min_soc = max(min_soc_values) if min_soc_values else 20
-            usable_energy_kwh = max(0, ((avg_soc - min_soc) / 100) * total_capacity_kwh)
             if profile_balance is not None:
                 avg_consumption_kwh = profile_balance.energy_kwh
                 status["consumption_forecast_source"] = profile_balance.source
@@ -678,9 +686,10 @@ class ChargeDelayManager:
             # noise so a near-balanced day still holds for the cheap window.
             deadband_kwh = ctrl._charge_delay_balance_deadband_kwh
             ctrl._charge_delay_balance_needs_charge = (
-                (usable_energy_kwh + raw_forecast)
+                (usable_energy_kwh * discharge_efficiency + raw_forecast)
                 < (avg_consumption_kwh - deadband_kwh)
             )
+            ctrl._charge_delay_energy_inputs = balance_inputs
             ctrl._charge_delay_forecast_cache = forecast_today
             ctrl._charge_delay_forecast_source_cache = forecast_source
             ctrl._charge_delay_forecast_conversion_cache = forecast.conversion
@@ -691,7 +700,7 @@ class ChargeDelayManager:
                 "(deadband %.2f) → %s",
                 "initialised" if prev_cache is None else "changed",
                 forecast_today,
-                usable_energy_kwh, raw_forecast, usable_energy_kwh + raw_forecast,
+                usable_energy_kwh * discharge_efficiency, raw_forecast, usable_energy_kwh * discharge_efficiency + raw_forecast,
                 avg_consumption_kwh, deadband_kwh,
                 "grid needed (unlock delay)" if ctrl._charge_delay_balance_needs_charge else "solar sufficient (keep delay)",
             )
@@ -799,7 +808,9 @@ class ChargeDelayManager:
             status["profile_days"] = 0
             status["profile_fallback_reason"] = "empty_horizon"
 
-        net_solar_for_battery = remaining_solar_kwh - remaining_consumption_kwh
+        net_solar_for_battery = _stored_net_solar(
+            remaining_solar_kwh, remaining_consumption_kwh, charge_efficiency, discharge_efficiency
+        )
 
         # Time backup check
         safety_margin_h = ctrl._delay_safety_margin_h
@@ -819,6 +830,7 @@ class ChargeDelayManager:
             forecast_today, energy_needed_kwh, ctrl._solar_t_start, t_end, now_h,
             forecast_is_remaining=forecast_is_remaining,
             consumption_profile=profile_forecast,
+            charge_efficiency=charge_efficiency, discharge_efficiency=discharge_efficiency,
         )
         if (
             energy_balance_unlock_h is not None
@@ -867,6 +879,7 @@ class ChargeDelayManager:
                     safety_factor=1.0,
                     forecast_is_remaining=forecast_is_remaining,
                     consumption_profile=profile_forecast,
+                    charge_efficiency=charge_efficiency, discharge_efficiency=discharge_efficiency,
                 )
                 edge_h = (
                     time_backup_unlock_h
@@ -1112,6 +1125,8 @@ class ChargeDelayManager:
         safety_factor: float = DELAY_SAFETY_FACTOR,
         forecast_is_remaining: bool = False,
         consumption_profile=None,
+        charge_efficiency: float = 1.0,
+        discharge_efficiency: float = 1.0,
     ) -> float | None:
         """Estimate when the energy balance condition will trigger the delay unlock.
 
@@ -1196,7 +1211,8 @@ class ChargeDelayManager:
                     if window_hours_per_day > 0 and remaining_window_hours > 0
                     else 0.0
                 )
-            return remaining_solar - remaining_consumption
+            return _stored_net_solar(remaining_solar, remaining_consumption,
+                                     charge_efficiency, discharge_efficiency)
 
         # If already below threshold now, return now_h
         if net_solar_at(now_h) < threshold:
