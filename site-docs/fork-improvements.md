@@ -108,3 +108,33 @@ this empirical reserve is not a probabilistic weather guarantee. Both scalar
 and period energy use the same adjustment; dashboard reads do not train history.
 The per-entry daily-energy store retains at most 240 outcomes over 90 days and
 16 pending snapshots. Calibration history survives daily-total resets.
+
+## Native forecast curves
+
+Configured numeric forecast entities can now carry native provider attributes:
+
+- Solcast `detailedForecast`: `period_start` or `period_end`, `pv_estimate` in kW,
+  and optional ISO `period` duration (default `PT30M`). Explicit start/end pairs
+  use their actual elapsed duration.
+- Forecast.Solar `result.watt_hours_period`: Wh for intervals ending at each
+  timestamp. The first point must be a zero-energy boundary, or the attributes
+  must specify `period_minutes` for its start to be known.
+- Forecast.Solar `result.watts`: timestamped W samples, integrated with the
+  trapezoidal rule between adjacent timestamps. Top-level maps also work.
+
+Explicit offsets preserve repeated DST hours. Naive native timestamps require
+provider `timezone` metadata (also accepted from `message.info.timezone`);
+ambiguous and nonexistent local times are rejected. Explicit zero-energy
+Forecast.Solar night intervals up to 24 hours keep multi-day curves continuous.
+Interval-ending Wh may end at zero the next provider-local day even if the
+preceding sunset period is positive; sampled W still requires two zero endpoints;
+positive-energy gaps longer than two hours, duplicate instants, overlaps,
+ordering errors and missing intervals cause
+an explicit scalar fallback. Positional arrays and daily cumulative Wh totals
+are not interpreted as period curves. Existing explicit-energy periods remain
+supported, with overlap/order validation added.
+
+These adapters consume attributes exposed by the configured entity; they do
+not fetch provider APIs or credentials. Diagnostics report curve provenance and
+fallback reason. The existing timeline normalizes the chosen curve to the
+remaining scalar budget, and calibration applies the same reserve to both.
