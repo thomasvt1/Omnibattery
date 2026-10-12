@@ -33,6 +33,16 @@ def _timestamp(value: Any, zone_name: str | None) -> datetime:
     return candidates.pop()
 
 
+
+def _provider_day(value: Any, zone_name: str | None):
+    """Keep the provider's calendar boundary before canonicalizing to UTC."""
+    stamp = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    if zone_name:
+        return _timestamp(value, zone_name).astimezone(ZoneInfo(zone_name)).date()
+    # Naive values without a zone have already been rejected by _timestamp.
+    return stamp.date()
+
+
 def _number(value: Any) -> float:
     value = float(value)
     if not math.isfinite(value) or value < 0:
@@ -96,31 +106,37 @@ def adapt_native_forecast(attributes: dict) -> ProviderCurve | None:
         if kind is None:
             return None
         source = 'forecast_solar_' + kind
-        points = sorted((_timestamp(k, zone), _number(v)) for k,v in result[kind].items())
+        points = sorted((_timestamp(k, zone), _number(v), _provider_day(k, zone))
+                        for k,v in result[kind].items())
         if len({p[0] for p in points}) != len(points):
             raise ValueError('duplicate instant')
         rows = []
         previous = None
-        for stamp, value in points:
+        for stamp, value, provider_day in points:
             if previous is None:
                 if kind == 'watt_hours_period' and value > 0:
                     minutes = attributes.get('period_minutes')
                     if minutes is None:
                         raise ValueError('first interval energy has no start boundary')
-                    previous = (stamp - _duration(f'PT{minutes}M'), 0.0)
+                    previous = (stamp - _duration(f'PT{minutes}M'), 0.0, provider_day)
                 else:
-                    previous = (stamp, value)
+                    previous = (stamp, value, provider_day)
                     continue
-            start, old_value = previous
+            start, old_value, previous_day = previous
             seconds = (stamp - start).total_seconds()
             # Native multi-day curves carry explicit zero-energy night gaps.
             # Positive-energy gaps still need normal period spacing.
-            zero_gap = value == 0 and old_value == 0
+            # Ending-period Wh at sunrise covers the overnight interval; its
+            # preceding sunset period may still be positive. Sampled watts
+            # require zero at both ends. Same-day positive-to-zero gaps remain
+            # invalid because they may conceal missing daytime periods.
+            overnight_energy = kind == 'watt_hours_period' and provider_day != previous_day
+            zero_gap = value == 0 and (old_value == 0 or overnight_energy)
             if not 0 < seconds <= (86400 if zero_gap else 7200):
                 raise ValueError('invalid or missing Forecast.Solar interval')
             energy = value / 1000 if kind == 'watt_hours_period' else (old_value + value) / 2 * seconds / 3_600_000
             rows.append((start, stamp, energy))
-            previous = (stamp, value)
+            previous = (stamp, value, provider_day)
         return _validated(rows, source)
     except (KeyError, TypeError, ValueError, AttributeError, OverflowError):
         return ProviderCurve(reason='invalid_' + (source or 'native') + '_periods')

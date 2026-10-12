@@ -124,3 +124,20 @@ def test_long_gap_ending_at_zero_does_not_hide_missing_daytime_periods(kind):
         "2026-10-11T18:00:00Z": 0,
     }}})
     assert not curve.periods and curve.reason == "invalid_forecast_solar_" + kind + "_periods"
+
+
+@pytest.mark.parametrize("zone,offset", [("Europe/Amsterdam", "+02:00"), (None, "+10:00")])
+def test_native_ending_wh_accepts_positive_sunset_then_zero_next_sunrise(zone, offset):
+    payload = {"result": {"watt_hours_period": {
+        "2026-10-11T19:00:00" + offset: 0,
+        "2026-10-11T19:39:23" + offset: 46,
+        "2026-10-12T06:40:22" + offset: 0,
+        "2026-10-12T07:00:00" + offset: 100,
+    }}}
+    if zone:
+        payload["timezone"] = zone
+    curve = adapt_native_forecast(payload)
+    assert curve.reason is None
+    assert [row[2] for row in curve.periods] == [.046, 0, .1]
+    payload["result"] = {"watts": payload["result"]["watt_hours_period"]}
+    assert adapt_native_forecast(payload).reason  # watts would imply a ramp all night

@@ -125,7 +125,9 @@ Configured numeric forecast entities can now carry native provider attributes:
 Explicit offsets preserve repeated DST hours. Naive native timestamps require
 provider `timezone` metadata (also accepted from `message.info.timezone`);
 ambiguous and nonexistent local times are rejected. Explicit zero-energy
-Forecast.Solar night intervals up to 24 hours keep multi-day curves continuous;
+Forecast.Solar night intervals up to 24 hours keep multi-day curves continuous.
+Interval-ending Wh may end at zero the next provider-local day even if the
+preceding sunset period is positive; sampled W still requires two zero endpoints;
 positive-energy gaps longer than two hours, duplicate instants, overlaps,
 ordering errors and missing intervals cause
 an explicit scalar fallback. Positional arrays and daily cumulative Wh totals
