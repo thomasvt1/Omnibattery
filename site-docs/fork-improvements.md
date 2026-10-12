@@ -138,3 +138,17 @@ These adapters consume attributes exposed by the configured entity; they do
 not fetch provider APIs or credentials. Diagnostics report curve provenance and
 fallback reason. The existing timeline normalizes the chosen curve to the
 remaining scalar budget, and calibration applies the same reserve to both.
+
+## Control decision boundary
+
+`ControlInputs` and `ControlDecision` are frozen records. The final controller
+write boundary checks ownership and availability, rejects non-finite/negative
+or simultaneous charge/discharge requests, applies directional caps and
+blockers, and then allows phase protection only to reduce the result. Manual
+and recovery blocker bypasses retain ownership checks and hard power ceilings.
+
+The existing driver/ACK execution path consumes that validated decision.
+Per-battery explanations expose the latest snapshot, its reasons and timestamp
+as `validated_intent`; service acceptance, device acknowledgement and measured
+power remain separate evidence. A skipped ownership write records a veto with
+no claimed command delivery. Fractional hard caps are floored before dispatch.

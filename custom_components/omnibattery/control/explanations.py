@@ -55,5 +55,6 @@ def battery_explanations(controller):
             "blockers": blocks,
             "release_times": sorted(set(releases)),
             "available": bool(battery.is_available),
+            "last_control_decision": getattr(controller, "_last_control_decisions", {}).get(str(battery.device_key)),
         }
     return result

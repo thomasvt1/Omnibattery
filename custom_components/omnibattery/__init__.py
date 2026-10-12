@@ -6698,154 +6698,52 @@ class ChargeDischargeController:
 
         Returns True if command was acknowledged, False otherwise.
         """
-        if owner == "automatic" and getattr(
-            coordinator, CONF_BATTERY_MANUAL_MODE_ENABLED, False
-        ):
-            _LOGGER.debug(
-                "[%s] Skipping automatic power write - individual manual mode owns this battery",
-                getattr(coordinator, "name", coordinator),
-            )
+        from dataclasses import asdict, replace
+        from .control.decision import ControlInputs, decide_control, apply_phase_limits
+
+        inputs = ControlInputs(
+            requested_charge_w=charge_power,
+            requested_discharge_w=discharge_power,
+            requested_owner=owner,
+            available=bool(getattr(coordinator, "is_available", False)),
+            manual_owned=bool(getattr(coordinator, CONF_BATTERY_MANUAL_MODE_ENABLED, False)),
+            backup_owned=bool(getattr(self, "_is_backup_function_active", lambda _: False)(coordinator)),
+            external_owned=bool(getattr(coordinator, "rs485_user_disabled", False)),
+            slot_owned=bool(getattr(self, "_is_manual_slot_owned", lambda _: False)(coordinator)),
+            charge_cap_w=getattr(coordinator, "effective_max_charge_power",
+                                 getattr(coordinator, "max_charge_power", None)),
+            discharge_cap_w=getattr(coordinator, "effective_max_discharge_power",
+                                    getattr(coordinator, "max_discharge_power", None)),
+        )
+        decision = decide_control(inputs)
+
+        def record_intent(value):
+            records = getattr(self, "_last_control_decisions", None)
+            if records is None:
+                records = self._last_control_decisions = {}
+            key = str(getattr(coordinator, "device_key", id(coordinator)))
+            records[key] = {**asdict(value), "net_power_w": value.net_power_w if value.allowed else None,
+                            "decided_at": dt_util.utcnow().isoformat(), "evidence": "validated_intent"}
+
+        if not decision.allowed:
+            record_intent(decision)
             return False
+        if not bypass_blockers:
+            charge_blockers = self.get_charge_blockers(coordinator) if decision.charge_power_w > 0 else {}
+            discharge_blockers = self.get_discharge_blockers(coordinator) if decision.discharge_power_w > 0 else {}
+            charge_keys = tuple(k for k in charge_blockers if k not in (ignore_charge_blockers or ()))
+            discharge_keys = tuple(k for k in discharge_blockers if k not in (ignore_discharge_blockers or ()))
+            if getattr(coordinator, "balance_hold", False):
+                discharge_keys += ("legacy_balance_hold",)
+            decision = decide_control(replace(inputs, charge_blockers=charge_keys, discharge_blockers=discharge_keys))
 
-        # Skip if battery is unreachable
-        if not coordinator.is_available:
-            _LOGGER.debug(
-                "[%s] Skipping power write - battery unreachable (failures: %d)",
-                coordinator.name, coordinator._consecutive_failures
-            )
-            return False
-
-        # Skip if backup function is active (battery manages itself autonomously)
-        if self._is_backup_function_active(coordinator):
-            _LOGGER.debug(
-                "[%s] Skipping power write - backup function is active",
-                coordinator.name
-            )
-            return False
-
-        # Skip if the user disabled RS485 control (battery driven by the official
-        # app / its own logic — must stay out of all PD power writes).
-        if coordinator.rs485_user_disabled:
-            _LOGGER.debug(
-                "[%s] Skipping power write - RS485 control disabled by user",
-                coordinator.name
-            )
-            return False
-
-        # Skip if a manual time slot already commanded this coord this cycle.
-        if owner == "automatic" and self._is_manual_slot_owned(coordinator):
-            _LOGGER.debug(
-                "[%s] Skipping power write - manual time slot owns this battery",
-                coordinator.name
-            )
-            return False
-
-        # Enforce the live per-battery ceilings at the final controller write
-        # boundary too. Most automatic paths are already allocated below these
-        # limits, but software-manual and recovery paths deliberately bypass
-        # normal blockers and can otherwise carry an old/persisted setpoint.
-        try:
-            charge_limit = max(
-                0,
-                int(
-                    getattr(
-                        coordinator,
-                        "effective_max_charge_power",
-                        coordinator.max_charge_power,
-                    )
-                ),
-            )
-            discharge_limit = max(
-                0,
-                int(
-                    getattr(
-                        coordinator,
-                        "effective_max_discharge_power",
-                        coordinator.max_discharge_power,
-                    )
-                ),
-            )
-            original_charge_power = charge_power
-            original_discharge_power = discharge_power
-            charge_power = min(charge_power, charge_limit)
-            discharge_power = min(discharge_power, discharge_limit)
-            if (
-                charge_power != original_charge_power
-                or discharge_power != original_discharge_power
-            ):
-                _LOGGER.debug(
-                    "[%s] Power command capped to configured limits: charge=%.0fW "
-                    "discharge=%.0fW (limits: %dW/%dW)",
-                    coordinator.name,
-                    charge_power,
-                    discharge_power,
-                    charge_limit,
-                    discharge_limit,
-                )
-        except (AttributeError, TypeError, ValueError):
-            # Lightweight third-party/test coordinators may not expose the
-            # optional live limits; the driver still enforces its hardware cap.
-            pass
-
-        if bypass_blockers:
-            charge_blockers = {}
-            discharge_blockers = {}
-        else:
-            if charge_power > 0:
-                charge_blockers = self.get_charge_blockers(coordinator)
-                if ignore_charge_blockers:
-                    charge_blockers = {
-                        source: block
-                        for source, block in charge_blockers.items()
-                        if source not in ignore_charge_blockers
-                    }
-            else:
-                charge_blockers = {}
-
-            if discharge_power > 0:
-                discharge_blockers = self.get_discharge_blockers(coordinator)
-                if ignore_discharge_blockers:
-                    discharge_blockers = {
-                        source: block
-                        for source, block in discharge_blockers.items()
-                        if source not in ignore_discharge_blockers
-                    }
-            else:
-                discharge_blockers = {}
-
-        if charge_power > 0 and charge_blockers:
-            _LOGGER.debug(
-                "[%s] Charge command suppressed by blockers: %s",
-                coordinator.name,
-                ", ".join(charge_blockers.keys()),
-            )
-            charge_power = 0
-
-        if discharge_power > 0 and discharge_blockers:
-            _LOGGER.debug(
-                "[%s] Discharge command suppressed by blockers: %s",
-                coordinator.name,
-                ", ".join(discharge_blockers.keys()),
-            )
-            discharge_power = 0
-
-        # Clear any legacy balance hold that may have been restored from storage.
-        if not bypass_blockers and coordinator.balance_hold and discharge_power > 0:
-            _LOGGER.debug("[%s] Legacy balance hold active - discharge suppressed", coordinator.name)
-            discharge_power = 0
-
-        # Last automatic guard: active-balance, predictive stop/restart and
-        # other specialized routes all converge here.  The normal distributor
-        # registers its full allocation as a plan, so this check cannot consume
-        # the phase budget twice; direct automatic commands are capped against
-        # the other batteries' current orders.
         phase_limiter = getattr(self, "_phase_power_limiter", None)
         if owner == "automatic" and phase_limiter is not None and phase_limiter.enabled:
-            charge_power, discharge_power = phase_limiter.limit_single_command(
-                coordinator,
-                charge_power,
-                discharge_power,
-            )
+            charge_limit, discharge_limit = phase_limiter.limit_single_command(
+                coordinator, decision.charge_power_w, decision.discharge_power_w)
+            decision = apply_phase_limits(decision, charge_limit, discharge_limit)
+        record_intent(decision)
+        charge_power, discharge_power = decision.charge_power_w, decision.discharge_power_w
 
         # Determine expected force mode (used in log messages below)
         if charge_power > 0:

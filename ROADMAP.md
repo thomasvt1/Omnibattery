@@ -71,7 +71,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 
 ### 10. Extract immutable control decision and execution contracts
 
-- Status: planned
+- Status: completed (implementation PR linked from the issue)
 - Issue: [10](https://github.com/thomasvt1/Omnibattery/issues/10)
 - Scope: Introduce pure immutable input/decision records for ownership, requested power, applied limits and reasons; extract final decision construction from the controller and retain one execution path.
 - Acceptance: Final automatic writes consume a validated decision; ownership and caps are tested independently; diagnostics can report the same decision used for execution; existing controller behavior remains covered.
