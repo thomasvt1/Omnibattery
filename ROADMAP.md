@@ -78,7 +78,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 
 ### 11. Add browser behavior tests and automatic HA test selection
 
-- Status: planned
+- Status: completed (implementation PR linked from the issue)
 - Issue: [11](https://github.com/thomasvt1/Omnibattery/issues/11)
 - Scope: Add a browser harness for real dashboard service failure, keyboard/mobile and unavailable-state behavior; select HA integration tests automatically rather than by a maintained file list; document reproducible checks.
 - Acceptance: Browser tests execute rendering and interaction; unit and HA jobs select disjoint complete test sets; new hass-fixture tests enter the HA job automatically; CI runs the relevant checks.

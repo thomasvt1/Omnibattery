@@ -152,3 +152,27 @@ Per-battery explanations expose the latest snapshot, its reasons and timestamp
 as `validated_intent`; service acceptance, device acknowledgement and measured
 power remain separate evidence. A skipped ownership write records a veto with
 no claimed command delivery. Fractional hard caps are floored before dispatch.
+
+## Reproducible validation
+
+Use Python 3.14 with `pip install -r requirements-test.txt`. Run
+`pytest -m "not ha"` for unit tests and `pytest -o addopts="" -m ha` for
+Home Assistant integration tests. Tests requesting `hass`, directly or through
+a requested fixture, local autouse fixture or `usefixtures`, are automatically assigned to the latter.
+Use `@pytest.mark.ha` for tests requesting HA fixtures dynamically. HA plugin
+autouse fixtures do not cause ordinary unit tests to be misclassified. Default
+`pytest` still skips HA tests when their plugin is disabled.
+
+For the real dashboard harness, use Node 22+, `npm ci`,
+`npx playwright install --with-deps chromium`, `npm run test:frontend`, and
+`npm run test:browser`. An installed Chromium can be selected with
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`. The harness uses the production panel
+with a mocked HA service boundary: it covers rejected and concurrent commands,
+duplicate suppression, keyboard sliders/help, live switch state, unavailable
+entities, a 390-pixel viewport, and automated WCAG checks. Acceptance feedback
+does not assert physical battery delivery. Mobile tab buttons keep accessible
+names when their visible labels are hidden.
+
+CI runs both Python selections and the browser/helper suites. Browser failure
+artifacts are uploaded for inspection. These tests exercise software contracts;
+they do not replace hardware commissioning or manual assistive-technology use.
