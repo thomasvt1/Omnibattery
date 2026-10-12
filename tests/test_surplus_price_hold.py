@@ -610,6 +610,10 @@ def test_live_absorption_target_recomputes_directional_losses():
     manager._refresh_live_target()
     # Five stored kWh required, four available above the floor.
     assert manager._live_target_kwh == pytest.approx(1)
+    controller._predictive_safety_margin_kwh = 1
+    manager._refresh_live_target()
+    assert manager._live_target_kwh == pytest.approx(4 / .6 - 4)
+    controller._predictive_safety_margin_kwh = 0
     snapshot = replace(snapshot, discharge_efficiency=1)
     manager._refresh_live_target()
     assert manager._live_target_kwh == 0

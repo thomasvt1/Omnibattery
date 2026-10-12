@@ -349,6 +349,7 @@ def test_modeled_losses_survive_selection_and_infeasible_copies(target, expected
 
 def test_absorption_target_converts_ac_load_to_stored_energy():
     assert calculate_absorption_target_kwh(3, 0, 10, discharge_efficiency=.6) == pytest.approx(5)
+    assert calculate_absorption_target_kwh(3, 0, 10, 1, discharge_efficiency=.6) == pytest.approx(4 / .6)
     slots = [_slot(10, .1)]
     plan = plan_surplus_absorption(slots, {slots[0]:10}, [_battery()],
         remaining_consumption_kwh=3, usable_energy_kwh=0, max_charge_power_w=10000,

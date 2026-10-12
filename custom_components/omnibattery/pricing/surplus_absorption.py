@@ -157,7 +157,7 @@ def calculate_absorption_target_kwh(
         return None
     margin = float(safety_margin_kwh) if _finite(safety_margin_kwh) else 0.0
     space = max(0.0, float(free_space_kwh))
-    needed = float(remaining_consumption_kwh) / float(discharge_efficiency) + max(0.0, margin) - float(usable_energy_kwh)
+    needed = (float(remaining_consumption_kwh) + max(0.0, margin)) / float(discharge_efficiency) - float(usable_energy_kwh)
     return max(0.0, min(needed, space))
 
 
