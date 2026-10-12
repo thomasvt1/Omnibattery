@@ -93,3 +93,24 @@ def test_native_curve_provenance_and_scalar_budget_reach_planner():
     reading=read_remaining_solar_kwh(hass,ctrl,now=now)
     assert reading.remaining_kwh==3 and not reading.periods
     assert reading.curve_fallback_reason=='invalid_solcast_periods'
+
+
+@pytest.mark.parametrize("kind", ["watts", "watt_hours_period"])
+def test_native_multiday_curves_keep_explicit_zero_night_intervals(kind):
+    curve = adapt_native_forecast({"result": {kind: {
+        "2026-10-11T17:00:00Z": 0,
+        "2026-10-11T18:00:00Z": 0,
+        "2026-10-12T06:00:00Z": 0,
+        "2026-10-12T07:00:00Z": 1000,
+    }}})
+    assert curve.reason is None
+    assert curve.periods[1][2] == 0
+    assert curve.periods[-1][2] == (1 if kind == "watt_hours_period" else .5)
+
+
+@pytest.mark.parametrize("kind", ["watts", "watt_hours_period"])
+def test_long_positive_energy_gap_is_not_interpolated(kind):
+    curve = adapt_native_forecast({"result": {kind: {
+        "2026-10-11T10:00:00Z": 0, "2026-10-11T15:00:00Z": 1000,
+    }}})
+    assert not curve.periods and curve.reason
