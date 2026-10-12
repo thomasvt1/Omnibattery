@@ -64,7 +64,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 
 ### 9. Adapt native Solcast and Forecast.Solar period curves
 
-- Status: planned
+- Status: completed (implementation PR linked from the issue)
 - Issue: [9](https://github.com/thomasvt1/Omnibattery/issues/9)
 - Scope: Parse native provider period shapes with explicit power/energy units and durations, validate ordering/duplicates/overlaps, and expose provider versus fallback provenance.
 - Acceptance: Representative native payloads produce correct kWh and DST-safe periods; malformed/overlapping data falls back explicitly; scalar budgets remain consistent.
