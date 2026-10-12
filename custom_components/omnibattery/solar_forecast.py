@@ -69,6 +69,8 @@ class SolarForecast:
     conversion: str = "none"
     freshness: str = "unknown"
     reported_at: datetime | None = None
+    curve_source: str = "scalar_fallback"
+    curve_fallback_reason: str | None = None
 
     @property
     def remaining_kwh(self) -> float:
@@ -97,6 +99,8 @@ class SolarForecastInput:
     raw_remaining_kwh: float | None = None
     uncertainty_kwh: float = 0.0
     calibration_samples: int = 0
+    curve_source: str = "scalar_fallback"
+    curve_fallback_reason: str | None = None
 
     def __post_init__(self) -> None:
         """Keep the normalized contract finite even with a loose sensor value."""
@@ -255,7 +259,7 @@ def _period_energy_kwh(raw: dict[str, Any]) -> float | None:
     return value if math.isfinite(value) and value >= 0.0 else None
 
 
-def _extract_forecast_periods(state: Any) -> tuple[SolarForecastPeriod, ...]:
+def _extract_generic_periods(state: Any) -> tuple[SolarForecastPeriod, ...]:
     """Adapt the small set of explicit period schemas supported by the contract.
 
     A bare list of numbers is intentionally ignored.  Providers can expose
@@ -284,10 +288,28 @@ def _extract_forecast_periods(state: Any) -> tuple[SolarForecastPeriod, ...]:
         if start is None or end is None or energy is None:
             return ()
         try:
-            parsed.append(SolarForecastPeriod(start, end, energy))
+            period = SolarForecastPeriod(start, end, energy)
+            if parsed and period.start.timestamp() < parsed[-1].end.timestamp():
+                return ()
+            parsed.append(period)
         except ValueError:
             return ()
     return tuple(parsed)
+
+
+def _adapt_forecast_periods(state: Any):
+    from .forecast_providers import adapt_native_forecast
+    attributes = getattr(state, "attributes", {}) or {}
+    native = adapt_native_forecast(attributes)
+    if native is not None:
+        return (tuple(SolarForecastPeriod(*p) for p in native.periods), native.source, native.reason)
+    periods = _extract_generic_periods(state)
+    present = any(key in attributes for key in ("solar_forecast_periods", "forecast_periods", "periods"))
+    return periods, "explicit_energy" if periods else "scalar_fallback", (None if periods else "invalid_explicit_periods" if present else "missing_periods")
+
+
+def _extract_forecast_periods(state: Any) -> tuple[SolarForecastPeriod, ...]:
+    return _adapt_forecast_periods(state)[0]
 
 
 def forecast_freshness(state: Any, now: datetime, timezone: Any) -> tuple[str, datetime | None]:
@@ -356,11 +378,14 @@ def read_solar_forecast_kwh(
                 failure = freshness
             continue
         if value is not None:
+            periods, curve_source, curve_reason = _adapt_forecast_periods(state)
             forecast = SolarForecast(
                 value,
                 source,
                 sensor,
-                periods=_extract_forecast_periods(state),
+                periods=periods,
+                curve_source=curve_source,
+                curve_fallback_reason=curve_reason,
                 conversion="none",
                 freshness=freshness,
                 reported_at=reported_at,
@@ -372,6 +397,8 @@ def read_solar_forecast_kwh(
                 controller.solar_forecast_freshness = freshness
                 controller.solar_forecast_source = source
                 controller.solar_forecast_diagnostic_source = forecast.diagnostic_source
+                controller.solar_forecast_curve_source = curve_source
+                controller.solar_forecast_curve_fallback_reason = curve_reason
                 controller.solar_forecast_periods = forecast.periods
             return forecast
     if rejection is not None:
@@ -380,6 +407,8 @@ def read_solar_forecast_kwh(
         controller.solar_forecast_freshness = failure
         controller.solar_forecast_source = None
         controller.solar_forecast_diagnostic_source = None
+        controller.solar_forecast_curve_source = "scalar_fallback"
+        controller.solar_forecast_curve_fallback_reason = failure
         controller.solar_forecast_periods = ()
     return None
 
@@ -582,6 +611,8 @@ def _read_remaining_solar_kwh(
             ),
             conversion="dated_periods_zero_scalar",
             freshness=forecast.freshness,
+            curve_source=forecast.curve_source,
+            curve_fallback_reason=forecast.curve_fallback_reason,
         )
 
     if forecast.source == "remaining":
@@ -592,6 +623,8 @@ def _read_remaining_solar_kwh(
             original_source="remaining",
             conversion="none",
             freshness=forecast.freshness,
+            curve_source=forecast.curve_source,
+            curve_fallback_reason=forecast.curve_fallback_reason,
         )
         if update_controller:
             controller.solar_forecast_conversion = "none"
@@ -638,6 +671,8 @@ def _read_remaining_solar_kwh(
         original_source="today_legacy",
         conversion=conversion,
         freshness=forecast.freshness,
+        curve_source=forecast.curve_source,
+        curve_fallback_reason=forecast.curve_fallback_reason,
     )
 
 
