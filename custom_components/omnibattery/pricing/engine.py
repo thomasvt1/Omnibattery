@@ -108,7 +108,7 @@ from .nordpool import (
     OfficialNordPoolSource,
     resolve_official_nordpool_source,
 )
-from ..energy_model import future_charge_efficiency, future_discharge_efficiency
+from ..energy_model import future_charge_efficiency
 from .time_math import instant, elapsed, time_min, time_max, local_time
 
 if TYPE_CHECKING:
@@ -2101,9 +2101,7 @@ class PricingManager:
                     getattr(self._controller, "_predictive_safety_margin_kwh", 0.0)
                 ),
                 charge_efficiency=self._charge_efficiency_bound(),
-                discharge_efficiency=future_discharge_efficiency(
-                    self._controller, self._controller.coordinators
-                ),
+
                 charge_power_w=float(getattr(self._controller, "max_charge_capacity", 0.0) or 0.0),
                 max_export_power_w=export_limit_w,
                 export_mode=export_mode,

@@ -370,18 +370,23 @@ def test_balance_needs_charge_unlocks_low_forecast(monkeypatch):
     assert ctrl._charge_delay_status["unlock_reason"] == "low_forecast"
 
 
-def test_balanced_day_holds_with_deadband():
-    # #4 concrete day: usable ~0.4 + raw forecast 15.76 vs 15.40 consumption.
-    # A hidden 0.85 haircut (15.76 -> 13.40) would flip this into a false deficit
-    # and a latched pre-dawn unlock. The configured safety margin is the only
-    # forecast conservatism; the sensor value must remain unchanged here.
+@pytest.mark.parametrize("efficiency, needs_charge", [(1.0, False), (.85, True)])
+def test_balance_preserves_raw_forecast_but_accounts_for_modeled_losses(
+    monkeypatch, efficiency, needs_charge
+):
+    from custom_components.omnibattery.energy_model import BatteryEnergyModel
+    now = dt_util.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    monkeypatch.setattr(charge_delay_module, "_decision_now", lambda: now)
+    coord = _coord(soc=24, total_energy=10.0, min_soc=20)
+    coord.capabilities = SimpleNamespace(
+        energy_model=BatteryEnergyModel(efficiency, efficiency))
     ctrl = _controller(
-        coordinators=[_coord(soc=24, total_energy=10.0, min_soc=20)],
+        coordinators=[coord],
         _consumption_tracker=_tracker(get_avg_daily_consumption=lambda: 15.40),
     )
     mgr = _make_mgr(ctrl, states={"sensor.forecast": _state(15.76)})
     mgr._should_delay_charge(80)
-    assert ctrl._charge_delay_balance_needs_charge is False
+    assert ctrl._charge_delay_balance_needs_charge is needs_charge
     assert ctrl._charge_delay_forecast_cache == pytest.approx(15.76)
 
 
@@ -927,10 +932,10 @@ def _cushion_mgr(forecast):
 
 
 def test_cushion_shortfall_holds_for_cheaper_hour(monkeypatch):
-    # stored net = (5.45 - 1.46) * .85 = 3.39: below the factored 3.9 edge but still above the bare 3.0 need
+    # stored net = 6 * .85 - (5 * 7/24)/.85 = 3.38: below the factored 3.9 edge but still above the bare 3.0 need
     # -> hold for the cheaper hour instead of unlocking into the morning peak.
     _at_hour(monkeypatch, 9)
-    mgr = _cushion_mgr(5.45)
+    mgr = _cushion_mgr(6.0)
     mgr._price_optimal_release_h = lambda now_h, edge_h, charge_h=None: 12.0
     assert mgr._should_delay_charge(80) is True
     assert mgr._controller._charge_delay_status["estimated_unlock_time"] == "12:00"
@@ -939,7 +944,7 @@ def test_cushion_shortfall_holds_for_cheaper_hour(monkeypatch):
 
 def test_cushion_shortfall_unlocks_when_now_is_cheapest(monkeypatch):
     _at_hour(monkeypatch, 9)
-    mgr = _cushion_mgr(5.45)
+    mgr = _cushion_mgr(6.0)
     mgr._price_optimal_release_h = lambda now_h, edge_h, charge_h=None: now_h
     assert mgr._should_delay_charge(80) is False
     assert mgr._controller._charge_delay_status["unlock_reason"] == "energy_balance"
@@ -948,7 +953,7 @@ def test_cushion_shortfall_unlocks_when_now_is_cheapest(monkeypatch):
 def test_cushion_shortfall_unlocks_without_price_data(monkeypatch):
     # No price data -> legacy instant unlock preserved.
     _at_hour(monkeypatch, 9)
-    mgr = _cushion_mgr(5.45)
+    mgr = _cushion_mgr(6.0)
     mgr._price_optimal_release_h = lambda now_h, edge_h, charge_h=None: None
     assert mgr._should_delay_charge(80) is False
     assert mgr._controller._charge_delay_status["unlock_reason"] == "energy_balance"
@@ -970,7 +975,7 @@ def test_cushion_hold_window_never_passes_bare_balance_edge(monkeypatch):
     # The edge handed to the price scorer is the BARE (x1.0) balance crossing,
     # never the factored one, so the hold cannot eat into the target itself.
     _at_hour(monkeypatch, 9)
-    mgr = _cushion_mgr(5.45)
+    mgr = _cushion_mgr(6.0)
     edges = []
     mgr._price_optimal_release_h = lambda now_h, edge_h, charge_h=None: edges.append(edge_h) or now_h
     # Record what the gate actually asked the projection for, so the expected edge
@@ -1109,4 +1114,8 @@ def test_delay_solar_surplus_and_unlock_projection_use_stored_energy(monkeypatch
 
 
 def test_negative_net_solar_converts_ac_deficit_to_stored_energy():
-    assert charge_delay_module._stored_net_solar(2, 5, .8, .6) == -5
+    assert charge_delay_module._stored_net_solar(2, 5, .8, .6) == pytest.approx(2*.8 - 5/.6)
+
+
+def test_scalar_balance_does_not_assume_morning_load_coincides_with_afternoon_pv():
+    assert charge_delay_module._stored_net_solar(5, 3, .6, .6) == -2

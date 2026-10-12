@@ -167,9 +167,11 @@ def _charge_time_h(
 
 
 def _stored_net_solar(solar, consumption, charge_efficiency, discharge_efficiency):
-    """Net simultaneous AC flows before converting the remainder to stored kWh."""
-    net = solar - consumption
-    return net * charge_efficiency if net >= 0 else net / discharge_efficiency
+    """Conservative stored balance when scalar totals lack matched intervals.
+
+    Demand may precede PV, so never assume that full-window totals coincide.
+    """
+    return solar * charge_efficiency - consumption / discharge_efficiency
 
 
 class ChargeDelayManager:
@@ -686,7 +688,7 @@ class ChargeDelayManager:
             # noise so a near-balanced day still holds for the cheap window.
             deadband_kwh = ctrl._charge_delay_balance_deadband_kwh
             ctrl._charge_delay_balance_needs_charge = (
-                (usable_energy_kwh * discharge_efficiency + raw_forecast)
+                (usable_energy_kwh * discharge_efficiency + raw_forecast * charge_efficiency * discharge_efficiency)
                 < (avg_consumption_kwh - deadband_kwh)
             )
             ctrl._charge_delay_energy_inputs = balance_inputs
@@ -700,7 +702,8 @@ class ChargeDelayManager:
                 "(deadband %.2f) → %s",
                 "initialised" if prev_cache is None else "changed",
                 forecast_today,
-                usable_energy_kwh * discharge_efficiency, raw_forecast, usable_energy_kwh * discharge_efficiency + raw_forecast,
+                usable_energy_kwh * discharge_efficiency, raw_forecast * charge_efficiency * discharge_efficiency,
+                usable_energy_kwh * discharge_efficiency + raw_forecast * charge_efficiency * discharge_efficiency,
                 avg_consumption_kwh, deadband_kwh,
                 "grid needed (unlock delay)" if ctrl._charge_delay_balance_needs_charge else "solar sufficient (keep delay)",
             )

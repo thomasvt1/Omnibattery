@@ -74,3 +74,12 @@ discharge losses. Simultaneous solar serves household load directly; only the
 net surplus crosses the charge converter and only net demand crosses the
 discharge converter. Plans retain the original AC intervals for dashboard
 simulation separately from stored-energy intervals used for scheduling.
+
+Charge-delay balances convert stored capacity to deliverable AC energy and net
+solar production to stored energy, including unlock-time projections. Scalar
+charge-delay totals use separated-flow losses because morning load and afternoon
+PV cannot be assumed to coincide; dated chronological intervals can net flows. Curtailment
+slot quotas remain AC output while SOC targets describe stored depletion.
+For mixed fleets, headroom planning uses the highest participating discharge
+efficiency: this is the conservative bound on stored depletion for a given AC
+output, whereas demand reserves use the lowest efficiency.

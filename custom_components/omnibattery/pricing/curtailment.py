@@ -425,7 +425,7 @@ def plan_curtailment(
     headroom_margin_kwh: float = 0.0,
     charge_power_w: float | None = None,
     charge_efficiency: float = CHARGE_EFFICIENCY,
-    discharge_efficiency: float = 1.0,
+    discharge_efficiency: float | None = None,
     max_export_power_w: float | None = 0.0,
     export_mode: str | None = None,
     solar_fraction_fn: Callable[[float], float] | None = None,
@@ -445,6 +445,16 @@ def plan_curtailment(
         plan.status, plan.reason = "fail_safe", "invalid_charge_efficiency"
         return plan
     charge_efficiency = float(charge_efficiency)
+    if discharge_efficiency is None:
+        # Headroom is a minimum depletion target: the most efficient possible
+        # discharge needs the greatest AC output to remove that stored energy.
+        discharge_efficiency = max(
+            (float(b.discharge_efficiency) for b in batteries
+             if not _invalid_battery(b) and b.can_discharge
+             and b.max_discharge_power_w > EPSILON
+             and _finite(b.discharge_efficiency) and 0 < b.discharge_efficiency <= 1),
+            default=1.0,
+        )
     if not _finite(discharge_efficiency) or not 0 < float(discharge_efficiency) <= 1:
         plan.status, plan.reason = "fail_safe", "invalid_discharge_efficiency"
         return plan

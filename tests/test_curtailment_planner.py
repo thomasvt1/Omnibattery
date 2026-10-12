@@ -459,3 +459,21 @@ def test_predischarge_ac_quota_and_stored_soc_depletion_are_distinct():
     assert plan.target_soc_by_battery["battery-1"] == pytest.approx(50)
     assert sum(s.planned_energy_kwh for s in plan.selected_discharge_slots) == pytest.approx(3)
     assert plan.selected_discharge_slots[0].power_w == pytest.approx(3000)
+
+
+def test_mixed_headroom_uses_maximum_discharge_efficiency():
+    from dataclasses import replace
+    before, risk = _slot(8, .3), _slot(9, -.1)
+    batteries = [
+        replace(_battery(name="a", soc=100, power=5000), discharge_efficiency=.6),
+        replace(_battery(name="b", soc=100, power=5000), discharge_efficiency=.9),
+    ]
+    plan = plan_curtailment(
+        [before, risk], 5, 3, batteries,
+        solar_by_slot={before: 0, risk: 5},
+        consumption_by_slot={before: 3, risk: 0},
+        charge_power_w=5000, charge_efficiency=1, now=DAY,
+    )
+    # Three AC kWh guarantee only 3/.9 stored kWh depletion for this fleet.
+    assert plan.planned_discharge_kwh == pytest.approx(3/.9)
+    assert plan.shortfall_kwh == pytest.approx(5 - 3/.9)
