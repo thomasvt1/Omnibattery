@@ -153,3 +153,46 @@ async def test_runtime_records_missing_production_and_curtailment(monkeypatch):
     await tracker.accumulate_daily_solar_energy()
     assert calls[0][0][1] is None
     assert calls[0][1] == {'censored':True}
+
+
+@pytest.mark.asyncio
+async def test_runtime_store_round_trip_preserves_scored_and_pending_calibration():
+    from custom_components.omnibattery.tracking.consumption_tracker import ConsumptionTracker
+    from tests.test_consumption_tracker import _make_daily_energy_controller, _FakeConsumptionStore
+    journal = ForecastCalibration()
+    start = datetime(2026, 9, 1, 18, tzinfo=timezone.utc)
+    for n in range(10):
+        day(journal, start + timedelta(days=n))
+    assert journal.issue("provider", start + timedelta(days=10), 8)
+    tracker = object.__new__(ConsumptionTracker)
+    tracker._controller = _make_daily_energy_controller()
+    tracker.forecast_calibration = journal
+    tracker._daily_energy_store = _FakeConsumptionStore(None)
+    await tracker.async_save_daily_energy()
+    restored = object.__new__(ConsumptionTracker)
+    restored._controller = _make_daily_energy_controller()
+    restored.forecast_calibration = ForecastCalibration()
+    restored._daily_energy_store = tracker._daily_energy_store
+    await restored.load_daily_energy()
+    assert restored.forecast_calibration.dump() == journal.dump()
+    assert restored.forecast_calibration.stats("provider", start + timedelta(days=10))["calibrated"]
+    assert restored.forecast_calibration._last is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hour,power,censored", [(23, 0, False), (12, 0, True), (23, .2, True)])
+async def test_full_battery_zero_export_only_censors_plausible_solar(monkeypatch, hour, power, censored):
+    from custom_components.omnibattery.tracking import consumption_tracker as module
+    tracker = object.__new__(module.ConsumptionTracker)
+    tracker._hass = SimpleNamespace(config=SimpleNamespace(latitude=52.37, longitude=4.9))
+    now = datetime(2026, 6, 1, hour, tzinfo=timezone.utc)
+    monkeypatch.setattr(module.dt_util, "utcnow", lambda: now)
+    calls = []
+    tracker.forecast_calibration = SimpleNamespace(observe=lambda *a, **kw: calls.append((a,kw)))
+    tracker._solar_runtime_context = lambda _: {"explicit_curtailment": False, "battery_full_risk": True, "export_zero": True}
+    tracker._calibration_solar_power_kw = lambda _: power
+    tracker._read_total_solar_power_kw = lambda: None
+    tracker._solar_profile = SimpleNamespace(mode="off")
+    await tracker.accumulate_daily_solar_energy()
+    assert calls[0][0] == (now, power)
+    assert calls[0][1]["censored"] is censored

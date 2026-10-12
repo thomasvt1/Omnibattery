@@ -25,7 +25,7 @@ from typing import TYPE_CHECKING, Any, Optional
 from zoneinfo import ZoneInfo
 
 from astral import Observer
-from astral.sun import noon as astral_noon, sunrise as astral_sunrise
+from astral.sun import elevation as astral_elevation, noon as astral_noon, sunrise as astral_sunrise
 
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
@@ -661,7 +661,6 @@ class ConsumptionTracker:
         """Persist the solar start marker without leaking Store exceptions."""
         try:
             await self._solar_t_start_store.async_save({
-                "forecast_calibration": self.forecast_calibration.dump() if hasattr(self, "forecast_calibration") else {},
                 "date": date.today().isoformat(),
                 "t_start": self._controller._solar_t_start,
             })
@@ -789,6 +788,7 @@ class ConsumptionTracker:
         # has something worth saving (import/export); the date is keyed to today.
         try:
             await self._daily_energy_store.async_save({
+                "forecast_calibration": self.forecast_calibration.dump() if hasattr(self, "forecast_calibration") else {},
                 "date": date.today().isoformat(),
                 "solar_kwh": round(ctrl._daily_solar_energy_kwh, 4),
                 "home_kwh": round(ctrl._daily_home_energy_kwh, 4),
@@ -1074,6 +1074,21 @@ class ConsumptionTracker:
             sources += 1
         return total if sources else None
 
+    def _calibration_solar_possible(self, now: datetime, power_kw: float | None) -> bool:
+        """Censor suspected curtailment only while solar can plausibly produce."""
+        if power_kw is not None and power_kw > 0.05:
+            return True
+        try:
+            config = self._hass.config
+            latitude, longitude = float(config.latitude), float(config.longitude)
+            if not (math.isfinite(latitude) and math.isfinite(longitude)
+                    and -90 <= latitude <= 90 and -180 <= longitude <= 180):
+                return True
+            return astral_elevation(Observer(latitude, longitude), now) > 0
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            # Without location evidence, do not train on potentially curtailed PV.
+            return True
+
     async def accumulate_daily_solar_energy(self) -> None:
         """Integrate total solar production power → exact daily kWh.
 
@@ -1084,10 +1099,11 @@ class ConsumptionTracker:
         if hasattr(self, "forecast_calibration"):
             moment = dt_util.utcnow()
             context = self._solar_runtime_context(None)
+            observed_power = self._calibration_solar_power_kw(moment)
             censored = context['explicit_curtailment'] or (
-                context['battery_full_risk'] and context['export_zero'])
-            self.forecast_calibration.observe(moment, self._calibration_solar_power_kw(moment),
-                                              censored=censored)
+                context['battery_full_risk'] and context['export_zero']
+                and self._calibration_solar_possible(moment, observed_power))
+            self.forecast_calibration.observe(moment, observed_power, censored=censored)
         power_kw = self._read_total_solar_power_kw()
         if power_kw is None:
             self._daily_solar_last_time = None

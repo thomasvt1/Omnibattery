@@ -94,7 +94,9 @@ replace that snapshot. Source identity includes the sensor and conversion path.
 Production is integrated over that exact horizon, with at most 120 seconds
 between fresh samples and complete coverage required. Missing channels, stale
 telemetry, restarts with coverage gaps, and known or suspected curtailment leave
-an outcome unscored. They never become zero-production observations. Independent
+an outcome unscored. Full-battery/zero-export suspicion is gated by measured
+production or astronomical daylight, so ordinary nighttime zeros remain valid.
+They never turn missing coverage into zero-production observations. Independent
 battery PV requires all four MPPT channels, or a fresh independent aggregate PV
 reading; installations without that evidence remain uncalibrated.
 
