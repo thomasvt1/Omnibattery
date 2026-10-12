@@ -57,7 +57,7 @@ This roadmap is published before implementation. Work proceeds in the order belo
 
 ### 8. Track forecast error and expose calibrated uncertainty
 
-- Status: planned
+- Status: completed (implementation PR linked from the issue)
 - Issue: [8](https://github.com/thomasvt1/Omnibattery/issues/8)
 - Scope: Persist issued forecast snapshots and matched outcomes, calculate bias/error bands without hindsight leakage, expose calibration diagnostics, and apply bounded conservative uncertainty to planning when sufficient evidence exists.
 - Acceptance: Unscored/missing observations never become zero outcomes; evaluation matches issuance horizon; small samples remain uncalibrated; reserve adjustments and forecast diagnostics are tested.
