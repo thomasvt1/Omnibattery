@@ -158,7 +158,7 @@ no claimed command delivery. Fractional hard caps are floored before dispatch.
 Use Python 3.14 with `pip install -r requirements-test.txt`. Run
 `pytest -m "not ha"` for unit tests and `pytest -o addopts="" -m ha` for
 Home Assistant integration tests. Tests requesting `hass`, directly or through
-a requested fixture or `usefixtures`, are automatically assigned to the latter.
+a requested fixture, local autouse fixture or `usefixtures`, are automatically assigned to the latter.
 Use `@pytest.mark.ha` for tests requesting HA fixtures dynamically. HA plugin
 autouse fixtures do not cause ordinary unit tests to be misclassified. Default
 `pytest` still skips HA tests when their plugin is disabled.

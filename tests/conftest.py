@@ -51,6 +51,12 @@ def pytest_configure(config: pytest.Config) -> None:
 def _requires_home_assistant(item) -> bool:
     info = getattr(item, "_fixtureinfo", None)
     pending = list(getattr(info, "argnames", ()))
+    # Include autouse fixtures defined by this collection tree, but not the
+    # HA plugin's global autouse graph, which mentions hass for every test.
+    for name in getattr(info, "initialnames", ()):
+        definitions = getattr(info, "name2fixturedefs", {}).get(name, ())
+        if definitions and definitions[-1].has_location:
+            pending.append(name)
     for marker in item.iter_markers("usefixtures"):
         pending.extend(marker.args)
     seen = set()
@@ -77,7 +83,8 @@ def pytest_collection_modifyitems(
 
     The HA plugin adds autouse dependencies to every test, so its expanded
     fixturenames cannot classify tests. Walk only requested fixtures (including
-    usefixtures markers); mark dynamic request.getfixturevalue users with ha.
+    usefixtures markers and local autouse fixtures); mark dynamic
+    request.getfixturevalue users with ha.
     """
     plugin_loaded = config.pluginmanager.has_plugin("homeassistant")
     for item in items:
